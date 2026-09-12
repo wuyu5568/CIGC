@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package cigc.api;
+
+option go_package = "github.com/cigc/app/api;api";
+
+// 契约文档，当前 HTTP 路由手写，不强制 protoc 生成。
+
+service App {
+  rpc Health (HealthRequest) returns (HealthReply) {
+    option (google.api.http) = { get: "/health" };
+  }
+  rpc EthAuthorize (EthAuthorizeRequest) returns (EthAuthorizeReply) {
+    option (google.api.http) = { post: "/api/app_server/eth_authorize" body: "*" };
+  }
+  rpc UserInfo (UserInfoRequest) returns (UserInfoReply) {
+    option (google.api.http) = { get: "/api/app_server/user_info" };
+  }
+  rpc PackageList (PackageListRequest) returns (PackageListReply) {
+    option (google.api.http) = { get: "/api/app_server/package_list" };
+  }
+  rpc Buy (BuyRequest) returns (BuyReply) {
+    option (google.api.http) = { post: "/api/app_server/buy" body: "*" };
+  }
+  rpc OrderList (OrderListRequest) returns (OrderListReply) {
+    option (google.api.http) = { get: "/api/app_server/order_list" };
+  }
+  rpc AdminLogin (AdminLoginRequest) returns (AdminLoginReply) {
+    option (google.api.http) = { post: "/api/admin_cigc/login" body: "*" };
+  }
+  rpc AdminOrderPay (AdminOrderPayRequest) returns (AdminOrderPayReply) {
+    option (google.api.http) = { post: "/api/admin_cigc/order_pay" body: "*" };
+  }
+}
+
+message HealthRequest {}
+message HealthReply { string status = 1; string db = 2; }
+message EthAuthorizeRequest { string address = 1; string code = 2; string sign = 3; }
+message EthAuthorizeReply { string status = 1; string token = 2; }
+message UserInfoRequest {}
+message UserInfoReply { string status = 1; string address = 2; string amountGet = 3; string buy = 4; }
+message PackageListRequest {}
+message PackageListReply {}
+message BuyRequest { string amount = 1; }
+message BuyReply { string status = 1; uint64 order_id = 2; }
+message OrderListRequest {}
+message OrderListReply {}
+message AdminLoginRequest { string username = 1; string password = 2; }
+message AdminLoginReply { string token = 1; }
+message AdminOrderPayRequest { uint64 id = 1; }
+message AdminOrderPayReply { string status = 1; }

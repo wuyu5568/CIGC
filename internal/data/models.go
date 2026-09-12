@@ -1,0 +1,162 @@
+package data
+
+import (
+	"time"
+
+	"github.com/shopspring/decimal"
+)
+
+// 下列模型仅做表映射，不调用 AutoMigrate。
+
+type UserModel struct {
+	ID               uint64 `gorm:"primaryKey"`
+	Address          string `gorm:"size:64;uniqueIndex"`
+	InviterID        *uint64
+	AvailableBalance decimal.Decimal `gorm:"type:decimal(36,8)"`
+	FrozenBalance    decimal.Decimal `gorm:"type:decimal(36,8)"`
+	PaidAmount       decimal.Decimal `gorm:"type:decimal(36,8)"`
+	CapEffective     decimal.Decimal `gorm:"type:decimal(36,8)"`
+	DisabledAt       *time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+func (UserModel) TableName() string { return "users" }
+
+type LoginChallengeModel struct {
+	ID        uint64 `gorm:"primaryKey"`
+	Address   string `gorm:"size:64;index"`
+	Nonce     string `gorm:"size:64;uniqueIndex"`
+	ExpiresAt time.Time
+	UsedAt    *time.Time
+	CreatedAt time.Time
+}
+
+func (LoginChallengeModel) TableName() string { return "login_challenges" }
+
+type UserRecommendModel struct {
+	ID        uint64 `gorm:"primaryKey"`
+	UserID    uint64 `gorm:"uniqueIndex"`
+	Path      string `gorm:"size:2048"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+func (UserRecommendModel) TableName() string { return "user_recommends" }
+
+type UserPlacementModel struct {
+	ID        uint64 `gorm:"primaryKey"`
+	UserID    uint64 `gorm:"uniqueIndex"`
+	SponsorID uint64 `gorm:"column:sponsor_id;index"`
+	Side      string `gorm:"size:1"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+func (UserPlacementModel) TableName() string { return "user_placements" }
+
+type UserMatchBalanceModel struct {
+	UserID      uint64          `gorm:"primaryKey"`
+	LeftRemain  decimal.Decimal `gorm:"type:decimal(36,8)"`
+	RightRemain decimal.Decimal `gorm:"type:decimal(36,8)"`
+	UpdatedAt   time.Time
+}
+
+func (UserMatchBalanceModel) TableName() string { return "user_match_balances" }
+
+type MatchOrderAppliedModel struct {
+	OrderID    uint64 `gorm:"primaryKey"`
+	SettleDate time.Time
+	CreatedAt  time.Time
+}
+
+func (MatchOrderAppliedModel) TableName() string { return "match_order_applied" }
+
+type PackageModel struct {
+	ID        uint64          `gorm:"primaryKey"`
+	Amount    decimal.Decimal `gorm:"type:decimal(36,8)"`
+	Title     string
+	GoodsDesc string          `gorm:"column:goods_desc"`
+	DailyCap  decimal.Decimal `gorm:"column:daily_cap;type:decimal(36,8)"`
+	SortOrder int             `gorm:"column:sort_order"`
+	Enabled   bool
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+func (PackageModel) TableName() string { return "packages" }
+
+type OrderModel struct {
+	ID            uint64 `gorm:"primaryKey"`
+	UserID        uint64 `gorm:"index"`
+	PackageID     uint64
+	Amount        decimal.Decimal `gorm:"type:decimal(36,8)"`
+	TitleSnapshot string          `gorm:"column:title_snapshot"`
+	GoodsSnapshot string          `gorm:"column:goods_snapshot"`
+	Status        string          `gorm:"size:16;index"`
+	TxHash        *string         `gorm:"column:tx_hash;size:80"`
+	LogIndex      int             `gorm:"column:log_index"`
+	PaidAt        *time.Time
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+func (OrderModel) TableName() string { return "orders" }
+
+type LedgerEntryModel struct {
+	ID          uint64 `gorm:"primaryKey"`
+	UserID      uint64 `gorm:"index"`
+	OrderID     *uint64
+	EntryType   string          `gorm:"size:32;index"`
+	Amount      decimal.Decimal `gorm:"type:decimal(36,8)"`
+	BalanceKind string          `gorm:"size:16"`
+	SettleDate  *time.Time      `gorm:"type:date"`
+	Remark      string          `gorm:"size:255"`
+	CreatedAt   time.Time       `gorm:"index"`
+}
+
+func (LedgerEntryModel) TableName() string { return "ledger_entries" }
+
+type WithdrawModel struct {
+	ID             uint64          `gorm:"primaryKey"`
+	UserID         uint64          `gorm:"index"`
+	Amount         decimal.Decimal `gorm:"type:decimal(36,8)"`
+	FeeAmount      decimal.Decimal `gorm:"type:decimal(36,8)"`
+	CreditedAmount decimal.Decimal `gorm:"type:decimal(36,8)"`
+	Status         string          `gorm:"size:16;index"`
+	Remark         string          `gorm:"size:255"`
+	TxHash         string          `gorm:"column:tx_hash;size:80"`
+	PayoutError    string          `gorm:"column:payout_error;size:255"`
+	ReviewedAt     *time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+func (WithdrawModel) TableName() string { return "withdraws" }
+
+type BusinessConfigModel struct {
+	ID        uint64 `gorm:"primaryKey"`
+	ConfigKey string `gorm:"column:config_key;size:64;uniqueIndex"`
+	Name      string `gorm:"size:128"`
+	Value     string `gorm:"type:text"`
+	SortOrder int    `gorm:"column:sort_order"`
+	UpdatedAt time.Time
+}
+
+func (BusinessConfigModel) TableName() string { return "business_configs" }
+
+type SettleRunModel struct {
+	ID          uint64    `gorm:"primaryKey"`
+	SettleDate  time.Time `gorm:"type:date;uniqueIndex"`
+	Forced      bool
+	UserCount   int
+	CapUpdated  int
+	DirectCount int
+	MatchCount  int
+	ManageCount int
+	Remark      string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+func (SettleRunModel) TableName() string { return "settle_runs" }

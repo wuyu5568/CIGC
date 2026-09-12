@@ -1,0 +1,32 @@
+package biz
+
+import "github.com/go-kratos/kratos/v3/errors"
+
+var (
+	ErrNotFound             = errors.NotFound("BIZ_NOT_FOUND", "resource not found")
+	ErrInvalidAmount        = errors.BadRequest("BIZ_INVALID_AMOUNT", "invalid amount")
+	ErrUnauthorized         = errors.Unauthorized("BIZ_UNAUTHORIZED", "unauthorized")
+	ErrForbidden            = errors.Forbidden("BIZ_FORBIDDEN", "forbidden")
+	ErrUserNotFound         = errors.NotFound("BIZ_USER_NOT_FOUND", "user not found")
+	ErrInvalidSignature     = errors.Unauthorized("BIZ_INVALID_SIGNATURE", "invalid signature")
+	ErrInvalidNonce         = errors.BadRequest("BIZ_INVALID_NONCE", "invalid or expired nonce")
+	ErrInviteRequired       = errors.BadRequest("BIZ_INVITE_REQUIRED", "invite code required")
+	ErrInviteInvalid        = errors.BadRequest("BIZ_INVITE_INVALID", "invite code invalid")
+	ErrInsufficientBalance  = errors.BadRequest("BIZ_INSUFFICIENT_BALANCE", "insufficient balance")
+	ErrUserDisabled         = errors.Forbidden("BIZ_USER_DISABLED", "user disabled")
+	ErrPackageNotFound      = errors.NotFound("BIZ_PACKAGE_NOT_FOUND", "package not found")
+	ErrPackageDisabled      = errors.BadRequest("BIZ_PACKAGE_DISABLED", "package disabled")
+	ErrOrderNotFound        = errors.NotFound("BIZ_ORDER_NOT_FOUND", "order not found")
+	ErrOrderConflict        = errors.BadRequest("BIZ_ORDER_CONFLICT", "order not pending")
+	ErrForceSettleDisabled  = errors.Forbidden("BIZ_FORCE_SETTLE_DISABLED", "force settle disabled")
+	ErrUnsupportedOperation = errors.BadRequest("UNSUPPORTED_OPERATION", "该接口已废弃，请使用标记支付功能")
+	ErrLineLockUnsupported  = errors.BadRequest("UNSUPPORTED_OPERATION", "线锁未开放，请仅锁定用户")
+	ErrWithdrawNotFound     = errors.NotFound("BIZ_WITHDRAW_NOT_FOUND", "withdraw not found")
+	ErrWithdrawConflict     = errors.BadRequest("BIZ_WITHDRAW_CONFLICT", "withdraw not pending")
+	ErrWithdrawBelowMin     = errors.BadRequest("BIZ_WITHDRAW_BELOW_MIN", "below min withdraw amount")
+	ErrPlacementInvalidSide = errors.BadRequest("BIZ_PLACEMENT_INVALID_SIDE", "side must be L or R")
+	ErrPlacementConflict    = errors.BadRequest("BIZ_PLACEMENT_CONFLICT", "placement conflict")
+	ErrPlacementSelf        = errors.BadRequest("BIZ_PLACEMENT_SELF", "cannot place under self")
+	ErrPlacementNotFound    = errors.NotFound("BIZ_PLACEMENT_NOT_FOUND", "placement not found")
+	ErrPlacementNoSlot      = errors.BadRequest("BIZ_PLACEMENT_NO_SLOT", "no placement slot on shared chain")
+)
