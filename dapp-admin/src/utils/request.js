@@ -55,11 +55,12 @@ service.interceptors.request.use(config => {
         config.headers['Authorization'] = `Bearer ${token}` // 让每个请求携带自定义 token 请根据实际情况自行修改
     }
     if(config.method === "post"){
-        /* 修改post Content-type*/
-        config.headers["Content-type"]= 'application/x-www-form-urlencoded'
-        /*判断是否是new FormData类型*/
-        if(!(config.data instanceof FormData)){
-            config.data = qs.stringify(config.data);
+        if(config.data instanceof FormData){
+            delete config.headers['Content-type']
+            delete config.headers['Content-Type']
+        } else {
+            config.headers['Content-type'] = 'application/x-www-form-urlencoded'
+            config.data = qs.stringify(config.data)
         }
     }
     return config
@@ -67,7 +68,7 @@ service.interceptors.request.use(config => {
 
 // response interceptor
 service.interceptors.response.use((response) => {
-    if (response.config.method === "post") {
+    if (response.config.method === "post" && response.config.notify !== false) {
         notification.success({
             message: '成功提示',
             description: `操作成功`

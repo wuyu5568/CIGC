@@ -246,12 +246,52 @@ export default {
     },
     trade_list_3: (parameter) => {
         return axios({
-            url: `${api8005}/package_list`,
+            url: `${api8005}/web3_goods`,
             method: 'get',
             params: parameter
-        }).then((res) => {
-            const items = (res && (res.items || res.goods)) || []
-            return { ...res, goods: items, count: String(items.length) }
+        })
+    },
+    web3_goods_list: (parameter) => {
+        return axios({
+            url: `${api8005}/web3_goods`,
+            method: 'get',
+            params: parameter
+        })
+    },
+    web3_goods_create: (parameter) => {
+        return axios({
+            url: `${api8005}/web3_goods_create`,
+            method: 'post',
+            data: parameter
+        })
+    },
+    web3_goods_update: (parameter) => {
+        return axios({
+            url: `${api8005}/web3_goods_update`,
+            method: 'post',
+            data: parameter
+        })
+    },
+    web3_goods_status: (parameter) => {
+        return axios({
+            url: `${api8005}/web3_goods_status`,
+            method: 'post',
+            data: parameter
+        })
+    },
+    web3_goods_delete: (parameter) => {
+        return axios({
+            url: `${api8005}/web3_goods_delete`,
+            method: 'post',
+            data: parameter
+        })
+    },
+    web3_goods_image_upload: (parameter) => {
+        return axios({
+            url: `${api8005}/web3_goods_image_upload`,
+            method: 'post',
+            data: parameter,
+            notify: false
         })
     },
     package_create: (parameter) => {

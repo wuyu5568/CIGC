@@ -16,7 +16,7 @@
     </div>
     <div class="shop-list">
       <div class="investment-card" v-for="item in list" :key="item.id">
-        <div class="card-main-title">{{ item.title }} · {{ fmt(item.amount) }} USDT</div>
+        <div class="card-main-title">{{ fmt(item.amount) }} USDT</div>
         <ul class="investment-details">
           <li>
             <span class="detail-label">{{ lang('商品') }}：</span>

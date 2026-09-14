@@ -3,8 +3,9 @@ import { showLoadingToast, showFailToast, showSuccessToast, closeToast } from "v
 import userPerson from "../pinia/person";
 import lang from '@/i18n/index'
 
+const apiOrigin = String(import.meta.env.VITE_API ?? "").trim().replace(/\/+$/, "")
 const instance = axios.create({
-    baseURL: import.meta.env.DEV ? import.meta.env.VITE_API + "/api/" : import.meta.env.VITE_API + "/api/",
+    baseURL: apiOrigin ? `${apiOrigin}/api/` : "/api/",
 });
 // 请求拦截
 instance.interceptors.request.use((config: any) => {
