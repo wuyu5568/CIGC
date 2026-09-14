@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cigc/app/internal/conf"
@@ -17,12 +18,22 @@ type User struct {
 	Address          string
 	InviterID        *uint64
 	AvailableBalance decimal.Decimal
+	RechargeBalance  decimal.Decimal
 	FrozenBalance    decimal.Decimal
+	FrozenIspay      decimal.Decimal
+	IspayBalance     decimal.Decimal
+	LockBalance      decimal.Decimal
+	LockIspay        decimal.Decimal
 	PaidAmount       decimal.Decimal
 	CapEffective     decimal.Decimal
 	DisabledAt       *time.Time
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
+}
+
+// IsActivated 至少有一笔已支付订单。
+func (u *User) IsActivated() bool {
+	return u != nil && u.PaidAmount.IsPositive()
 }
 
 // IsDisabled 软删/锁定后不可登录。
@@ -49,6 +60,7 @@ type UserRepo interface {
 	ListAll(ctx context.Context) ([]*User, error)
 	SetCapEffective(ctx context.Context, userID uint64, cap decimal.Decimal) error
 	ListAdmin(ctx context.Context, address string, page, pageSize int) ([]*User, int, error)
+	ListByInviter(ctx context.Context, inviterID uint64) ([]*User, error)
 	SetDisabledAt(ctx context.Context, userID uint64, disabledAt *time.Time) error
 }
 
@@ -68,8 +80,18 @@ type AdminUserPage struct {
 type UserBalanceRepo interface {
 	AddAvailableBalance(ctx context.Context, userID uint64, delta decimal.Decimal) error
 	SubAvailableBalance(ctx context.Context, userID uint64, delta decimal.Decimal) error
+	AddRechargeBalance(ctx context.Context, userID uint64, delta decimal.Decimal) error
+	SubRechargeBalance(ctx context.Context, userID uint64, delta decimal.Decimal) error
 	AddFrozenBalance(ctx context.Context, userID uint64, delta decimal.Decimal) error
 	SubFrozenBalance(ctx context.Context, userID uint64, delta decimal.Decimal) error
+	AddFrozenIspay(ctx context.Context, userID uint64, delta decimal.Decimal) error
+	SubFrozenIspay(ctx context.Context, userID uint64, delta decimal.Decimal) error
+	AddIspayBalance(ctx context.Context, userID uint64, delta decimal.Decimal) error
+	SubIspayBalance(ctx context.Context, userID uint64, delta decimal.Decimal) error
+	AddLockBalance(ctx context.Context, userID uint64, delta decimal.Decimal) error
+	SubLockBalance(ctx context.Context, userID uint64, delta decimal.Decimal) error
+	AddLockIspay(ctx context.Context, userID uint64, delta decimal.Decimal) error
+	SubLockIspay(ctx context.Context, userID uint64, delta decimal.Decimal) error
 }
 
 // RecommendRepo 物化推荐祖先 path，供三代管理奖使用。
@@ -119,13 +141,14 @@ func NewUserUseCase(
 
 // EthAuthorize 校验对地址本身的 personal_sign；首次登录须绑定邀请人（创世除外）。
 func (uc *UserUseCase) EthAuthorize(ctx context.Context, address, signature, inviteCode string) (*LoginResult, error) {
+	rawAddr := strings.TrimSpace(address)
 	address, ok := wallet.NormalizeAddress(address)
 	if !ok || signature == "" {
 		return nil, ErrInvalidSignature
 	}
 	inviteCode = wallet.NormalizeOrEmpty(inviteCode)
 
-	if err := uc.verifier.Verify(address, address, signature); err != nil {
+	if err := uc.verifier.Verify(address, rawAddr, signature); err != nil {
 		return nil, ErrInvalidSignature
 	}
 

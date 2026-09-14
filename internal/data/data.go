@@ -32,9 +32,9 @@ func (d *Data) Session(ctx context.Context) *gorm.DB {
 	return d.db.WithContext(ctx)
 }
 
-// InTx 开启事务并把连接放入 ctx。
+// InTx 开启事务并把连接放入 ctx。已在事务中则复用同一条连接（GORM savepoint），避免外键锁死。
 func (d *Data) InTx(ctx context.Context, fn func(ctx context.Context) error) error {
-	return d.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return d.Session(ctx).Transaction(func(tx *gorm.DB) error {
 		return fn(context.WithValue(ctx, txCtxKey{}, tx))
 	})
 }

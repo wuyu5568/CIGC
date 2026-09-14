@@ -1,4 +1,4 @@
-.PHONY: build run tidy test compose-up compose-down
+.PHONY: build run tidy test compose-up compose-down migrate-existing smoke
 
 CONF ?= configs/config.yaml
 ifneq (,$(wildcard .env))
@@ -23,3 +23,9 @@ compose-up:
 
 compose-down:
 	docker compose down
+
+migrate-existing:
+	bash scripts/migrate_existing.sh
+
+smoke:
+	bash scripts/smoke.sh

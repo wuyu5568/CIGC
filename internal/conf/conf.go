@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cigc/app/internal/pkg/wallet"
+	"github.com/shopspring/decimal"
 	"gopkg.in/yaml.v3"
 )
 
@@ -44,33 +46,52 @@ type Auth struct {
 }
 
 type App struct {
-	GenesisAddress   string  `yaml:"genesis_address"`
-	SettleCron       string  `yaml:"settle_cron"`
-	SettleTimezone   string  `yaml:"settle_timezone"`
-	AllowForceSettle bool    `yaml:"allow_force_settle"`
-	PayoutEnabled    bool    `yaml:"payout_enabled"`
-	PayoutCron       string  `yaml:"payout_cron"`
-	BscRPC           string  `yaml:"bsc_rpc"`
-	UsdtAddress      string  `yaml:"usdt_address"`
-	HotWalletKey     string  `yaml:"hot_wallet_key"`
-	PayoutMaxUSDT    float64 `yaml:"-"`
+	GenesisAddress       string         `yaml:"genesis_address"`
+	SettleCron           string         `yaml:"settle_cron"`
+	SettleTimezone       string         `yaml:"settle_timezone"`
+	AllowForceSettle     bool           `yaml:"allow_force_settle"`
+	FullDownline         bool           `yaml:"full_downline"`
+	PayoutEnabled        bool           `yaml:"payout_enabled"`
+	PayoutCron           string         `yaml:"payout_cron"`
+	BscRPC               string         `yaml:"bsc_rpc"`
+	UsdtAddress          string         `yaml:"usdt_address"`
+	BuyContract          string         `yaml:"buy_contract"`
+	ReceiveAddress       string         `yaml:"receive_address"`
+	ReceiveAddresses     []ReceiveShare `yaml:"receive_addresses"`
+	DepositCron          string         `yaml:"deposit_cron"`
+	DepositConfirmations int            `yaml:"deposit_confirmations"`
+	HotWalletKey         string         `yaml:"hot_wallet_key"`
+	PayoutMaxUSDT        float64        `yaml:"-"`
+}
+
+// ReceiveShare 是一条收款地址及其分配百分比（如 75 表示 75%）。
+type ReceiveShare struct {
+	Address string `yaml:"address" json:"address"`
+	Percent string `yaml:"percent" json:"percent"`
 }
 
 const (
-	EnvHTTPAddr         = "CIGC_HTTP_ADDR"
-	EnvDatabaseDSN      = "CIGC_DATABASE_DSN"
-	EnvJWTKey           = "CIGC_JWT_KEY"
-	EnvAdminUsername    = "CIGC_ADMIN_USERNAME"
-	EnvAdminPassword    = "CIGC_ADMIN_PASSWORD"
-	EnvGenesisAddress   = "CIGC_GENESIS_ADDRESS"
-	EnvSettleCron       = "CIGC_SETTLE_CRON"
-	EnvSettleTimezone   = "CIGC_SETTLE_TIMEZONE"
-	EnvAllowForceSettle = "CIGC_ALLOW_FORCE_SETTLE"
-	EnvPayoutEnabled    = "CIGC_PAYOUT_ENABLED"
-	EnvHotWalletKey     = "CIGC_HOT_WALLET_KEY"
-	EnvBscRPC           = "CIGC_BSC_RPC"
-	EnvPayoutMaxUSDT    = "CIGC_PAYOUT_MAX_USDT"
-	EnvUSDTAddress      = "CIGC_USDT_ADDRESS"
+	EnvHTTPAddr             = "CIGC_HTTP_ADDR"
+	EnvDatabaseDSN          = "CIGC_DATABASE_DSN"
+	EnvJWTKey               = "CIGC_JWT_KEY"
+	EnvAdminUsername        = "CIGC_ADMIN_USERNAME"
+	EnvAdminPassword        = "CIGC_ADMIN_PASSWORD"
+	EnvGenesisAddress       = "CIGC_GENESIS_ADDRESS"
+	EnvSettleCron           = "CIGC_SETTLE_CRON"
+	EnvSettleTimezone       = "CIGC_SETTLE_TIMEZONE"
+	EnvAllowForceSettle     = "CIGC_ALLOW_FORCE_SETTLE"
+	EnvFullDownline         = "CIGC_FULL_DOWNLINE"
+	EnvPayoutEnabled        = "CIGC_PAYOUT_ENABLED"
+	EnvPayoutCron           = "CIGC_PAYOUT_CRON"
+	EnvHotWalletKey         = "CIGC_HOT_WALLET_KEY"
+	EnvBscRPC               = "CIGC_BSC_RPC"
+	EnvPayoutMaxUSDT        = "CIGC_PAYOUT_MAX_USDT"
+	EnvUSDTAddress          = "CIGC_USDT_ADDRESS"
+	EnvBuyContract          = "CIGC_BUY_CONTRACT"
+	EnvReceiveAddress       = "CIGC_RECEIVE_ADDRESS"
+	EnvReceiveAddresses     = "CIGC_RECEIVE_ADDRESSES"
+	EnvDepositCron          = "CIGC_DEPOSIT_CRON"
+	EnvDepositConfirmations = "CIGC_DEPOSIT_CONFIRMATIONS"
 )
 
 // Load 读取 YAML，再用 CIGC_* 环境变量覆盖，最后做启动校验。
@@ -90,6 +111,14 @@ func Load(path string) (*Bootstrap, error) {
 	return &bc, nil
 }
 
+// hasReceiveShares 是否配置了收款地址列表或单地址。
+func hasReceiveShares(app *App) bool {
+	if app == nil {
+		return false
+	}
+	return len(app.ReceiveAddresses) > 0 || strings.TrimSpace(app.ReceiveAddress) != ""
+}
+
 // Validate 检查必填项与打款安全开关。
 func Validate(bc *Bootstrap) error {
 	if bc == nil {
@@ -101,16 +130,64 @@ func Validate(bc *Bootstrap) error {
 	if strings.TrimSpace(bc.Auth.JWTKey) == "" {
 		return fmt.Errorf("%s is required", EnvJWTKey)
 	}
-	return ValidateAppSafety(&bc.App)
+	if err := ValidateAppSafety(&bc.App); err != nil {
+		return err
+	}
+	return ValidateReceive(&bc.App)
 }
 
-// ValidateAppSafety 开启打款时必须配置单笔上限。
-func ValidateAppSafety(app *App) error {
-	if app == nil {
+// ValidateReceive 多收款地址必须能规范化，且百分比合计 100。
+func ValidateReceive(app *App) error {
+	if app == nil || !hasReceiveShares(app) {
 		return nil
 	}
-	if app.PayoutEnabled && app.PayoutMaxUSDT <= 0 {
+	items := app.ReceiveAddresses
+	if len(items) == 0 && strings.TrimSpace(app.ReceiveAddress) != "" {
+		items = []ReceiveShare{{Address: app.ReceiveAddress, Percent: "100"}}
+	}
+	sum := decimal.Zero
+	seen := map[string]struct{}{}
+	for i, it := range items {
+		addr := wallet.NormalizeReceiveAddress(it.Address)
+		if addr == "" {
+			return fmt.Errorf("receive_addresses[%d]: invalid address", i)
+		}
+		if _, ok := seen[addr]; ok {
+			return fmt.Errorf("receive_addresses[%d]: duplicate address", i)
+		}
+		seen[addr] = struct{}{}
+		s := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(it.Percent), "%"))
+		if s == "" {
+			s = "100"
+		}
+		p, err := decimal.NewFromString(s)
+		if err != nil || !p.IsPositive() {
+			return fmt.Errorf("receive_addresses[%d]: bad percent", i)
+		}
+		sum = sum.Add(p)
+	}
+	if !sum.Equal(decimal.NewFromInt(100)) {
+		return fmt.Errorf("receive_addresses percents must sum to 100, got %s", sum)
+	}
+	return nil
+}
+
+// ValidateAppSafety 开启打款时必须有上限、热钱包、RPC 和 USDT 合约。
+func ValidateAppSafety(app *App) error {
+	if app == nil || !app.PayoutEnabled {
+		return nil
+	}
+	if app.PayoutMaxUSDT <= 0 {
 		return fmt.Errorf("payout_enabled requires %s > 0", EnvPayoutMaxUSDT)
+	}
+	if strings.TrimSpace(app.HotWalletKey) == "" {
+		return fmt.Errorf("payout_enabled requires %s", EnvHotWalletKey)
+	}
+	if strings.TrimSpace(app.BscRPC) == "" {
+		return fmt.Errorf("payout_enabled requires %s", EnvBscRPC)
+	}
+	if strings.TrimSpace(app.UsdtAddress) == "" {
+		return fmt.Errorf("payout_enabled requires %s", EnvUSDTAddress)
 	}
 	return nil
 }
@@ -143,6 +220,9 @@ func applyEnvOverrides(bc *Bootstrap) {
 	if v := strings.TrimSpace(os.Getenv(EnvAllowForceSettle)); v != "" {
 		bc.App.AllowForceSettle = envTruthy(v)
 	}
+	if v := strings.TrimSpace(os.Getenv(EnvFullDownline)); v != "" {
+		bc.App.FullDownline = envTruthy(v)
+	}
 	if v := strings.TrimSpace(os.Getenv(EnvHotWalletKey)); v != "" {
 		bc.App.HotWalletKey = v
 	}
@@ -152,8 +232,32 @@ func applyEnvOverrides(bc *Bootstrap) {
 	if v := strings.TrimSpace(os.Getenv(EnvUSDTAddress)); v != "" {
 		bc.App.UsdtAddress = v
 	}
+	if v := strings.TrimSpace(os.Getenv(EnvBuyContract)); v != "" {
+		bc.App.BuyContract = v
+	}
+	if v := strings.TrimSpace(os.Getenv(EnvReceiveAddress)); v != "" {
+		bc.App.ReceiveAddress = v
+	}
+	if v := strings.TrimSpace(os.Getenv(EnvReceiveAddresses)); v != "" {
+		var shares []ReceiveShare
+		if err := yaml.Unmarshal([]byte(v), &shares); err == nil && len(shares) > 0 {
+			bc.App.ReceiveAddresses = shares
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv(EnvDepositCron)); v != "" {
+		bc.App.DepositCron = v
+	}
+	if v := strings.TrimSpace(os.Getenv(EnvDepositConfirmations)); v != "" {
+		n, err := strconv.Atoi(v)
+		if err == nil && n >= 0 {
+			bc.App.DepositConfirmations = n
+		}
+	}
 	if v := strings.TrimSpace(os.Getenv(EnvPayoutEnabled)); v != "" {
 		bc.App.PayoutEnabled = envTruthy(v)
+	}
+	if v := strings.TrimSpace(os.Getenv(EnvPayoutCron)); v != "" {
+		bc.App.PayoutCron = v
 	}
 	if v := strings.TrimSpace(os.Getenv(EnvPayoutMaxUSDT)); v != "" {
 		f, err := strconv.ParseFloat(v, 64)

@@ -1,0 +1,36 @@
+.container{
+    >div.con{
+        .dataCon{
+            position: relative;
+            float: right;
+            border-radius: 8px;
+            border: 1px solid #1890FF;
+            margin-bottom: 10px;
+            cursor: pointer;
+            >div.data{
+                padding: 13px 13px 13px 30px;
+                a{
+                    &:not(:last-child){
+                        margin-right: 10px;
+                    }
+                }
+            }
+            >div.circle{
+                @size:18px;
+                width: @size;
+                height: @size;
+                position: absolute;
+                z-index: 1;
+                top: 50%;
+                left: 5px;
+                border: 1px solid #1890ff;
+                border-radius: 100%;
+                transform: translate(0,-50%);
+                color: #1890ff;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+        }
+    }
+}

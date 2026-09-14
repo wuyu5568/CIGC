@@ -27,6 +27,7 @@ func toSettleRun(row SettleRunModel) *biz.SettleRun {
 		DirectCount: row.DirectCount,
 		MatchCount:  row.MatchCount,
 		ManageCount: row.ManageCount,
+		StaticCount: row.StaticCount,
 		Remark:      row.Remark,
 		CreatedAt:   row.CreatedAt,
 		UpdatedAt:   row.UpdatedAt,
@@ -90,6 +91,18 @@ func isDuplicateKey(err error) bool {
 	return strings.Contains(msg, "Duplicate entry") || strings.Contains(msg, "1062")
 }
 
+func isForeignKey(err error) bool {
+	if err == nil {
+		return false
+	}
+	var mysqlErr *mysql.MySQLError
+	if errors.As(err, &mysqlErr) && (mysqlErr.Number == 1451 || mysqlErr.Number == 1452) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "foreign key") || strings.Contains(msg, "1451")
+}
+
 func (r *settleRunRepo) Upsert(ctx context.Context, run *biz.SettleRun) error {
 	day := time.Date(run.SettleDate.Year(), run.SettleDate.Month(), run.SettleDate.Day(), 0, 0, 0, 0, time.UTC)
 	row := SettleRunModel{
@@ -100,13 +113,14 @@ func (r *settleRunRepo) Upsert(ctx context.Context, run *biz.SettleRun) error {
 		DirectCount: run.DirectCount,
 		MatchCount:  run.MatchCount,
 		ManageCount: run.ManageCount,
+		StaticCount: run.StaticCount,
 		Remark:      run.Remark,
 	}
 	return r.data.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "settle_date"}},
 		DoUpdates: clause.AssignmentColumns([]string{
 			"forced", "user_count", "cap_updated", "direct_count",
-			"match_count", "manage_count", "remark", "updated_at",
+			"match_count", "manage_count", "static_count", "remark", "updated_at",
 		}),
 	}).Create(&row).Error
 }

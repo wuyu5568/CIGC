@@ -118,6 +118,17 @@ func (m *memUsers) ListAdmin(_ context.Context, address string, page, pageSize i
 	return filtered[start:end], total, nil
 }
 
+func (m *memUsers) ListByInviter(_ context.Context, inviterID uint64) ([]*User, error) {
+	var out []*User
+	for _, u := range m.byID {
+		if u.InviterID != nil && *u.InviterID == inviterID {
+			cp := *u
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
 func (m *memUsers) SetDisabledAt(_ context.Context, userID uint64, disabledAt *time.Time) error {
 	u, ok := m.byID[userID]
 	if !ok {
@@ -151,6 +162,90 @@ func (m *memUsers) SubAvailableBalance(_ context.Context, userID uint64, delta d
 	return nil
 }
 
+func (m *memUsers) AddRechargeBalance(_ context.Context, userID uint64, delta decimal.Decimal) error {
+	u, ok := m.byID[userID]
+	if !ok {
+		return ErrUserNotFound
+	}
+	u.RechargeBalance = u.RechargeBalance.Add(delta)
+	return nil
+}
+
+func (m *memUsers) SubRechargeBalance(_ context.Context, userID uint64, delta decimal.Decimal) error {
+	u, ok := m.byID[userID]
+	if !ok {
+		return ErrUserNotFound
+	}
+	if u.RechargeBalance.LessThan(delta) {
+		return ErrInsufficientBalance
+	}
+	u.RechargeBalance = u.RechargeBalance.Sub(delta)
+	return nil
+}
+
+func (m *memUsers) AddIspayBalance(_ context.Context, userID uint64, delta decimal.Decimal) error {
+	u, ok := m.byID[userID]
+	if !ok {
+		return ErrUserNotFound
+	}
+	u.IspayBalance = u.IspayBalance.Add(delta)
+	return nil
+}
+
+func (m *memUsers) SubIspayBalance(_ context.Context, userID uint64, delta decimal.Decimal) error {
+	u, ok := m.byID[userID]
+	if !ok {
+		return ErrUserNotFound
+	}
+	if u.IspayBalance.LessThan(delta) {
+		return ErrInsufficientBalance
+	}
+	u.IspayBalance = u.IspayBalance.Sub(delta)
+	return nil
+}
+
+func (m *memUsers) AddLockBalance(_ context.Context, userID uint64, delta decimal.Decimal) error {
+	u, ok := m.byID[userID]
+	if !ok {
+		return ErrUserNotFound
+	}
+	u.LockBalance = u.LockBalance.Add(delta)
+	return nil
+}
+
+func (m *memUsers) SubLockBalance(_ context.Context, userID uint64, delta decimal.Decimal) error {
+	u, ok := m.byID[userID]
+	if !ok {
+		return ErrUserNotFound
+	}
+	if u.LockBalance.LessThan(delta) {
+		return ErrInsufficientBalance
+	}
+	u.LockBalance = u.LockBalance.Sub(delta)
+	return nil
+}
+
+func (m *memUsers) AddLockIspay(_ context.Context, userID uint64, delta decimal.Decimal) error {
+	u, ok := m.byID[userID]
+	if !ok {
+		return ErrUserNotFound
+	}
+	u.LockIspay = u.LockIspay.Add(delta)
+	return nil
+}
+
+func (m *memUsers) SubLockIspay(_ context.Context, userID uint64, delta decimal.Decimal) error {
+	u, ok := m.byID[userID]
+	if !ok {
+		return ErrUserNotFound
+	}
+	if u.LockIspay.LessThan(delta) {
+		return ErrInsufficientBalance
+	}
+	u.LockIspay = u.LockIspay.Sub(delta)
+	return nil
+}
+
 func (m *memUsers) AddFrozenBalance(_ context.Context, userID uint64, delta decimal.Decimal) error {
 	u, ok := m.byID[userID]
 	if !ok {
@@ -169,6 +264,27 @@ func (m *memUsers) SubFrozenBalance(_ context.Context, userID uint64, delta deci
 		return ErrInsufficientBalance
 	}
 	u.FrozenBalance = u.FrozenBalance.Sub(delta)
+	return nil
+}
+
+func (m *memUsers) AddFrozenIspay(_ context.Context, userID uint64, delta decimal.Decimal) error {
+	u, ok := m.byID[userID]
+	if !ok {
+		return ErrUserNotFound
+	}
+	u.FrozenIspay = u.FrozenIspay.Add(delta)
+	return nil
+}
+
+func (m *memUsers) SubFrozenIspay(_ context.Context, userID uint64, delta decimal.Decimal) error {
+	u, ok := m.byID[userID]
+	if !ok {
+		return ErrUserNotFound
+	}
+	if u.FrozenIspay.LessThan(delta) {
+		return ErrInsufficientBalance
+	}
+	u.FrozenIspay = u.FrozenIspay.Sub(delta)
 	return nil
 }
 
@@ -259,7 +375,7 @@ func TestAdminLogin(t *testing.T) {
 
 func TestEthAuthorize_AutoPlacesByInvite(t *testing.T) {
 	users := newMemUsers()
-	place := NewPlacementUseCase(users, newMemPlacements())
+	place := NewPlacementUseCase(users, newMemPlacements(), nil)
 	uc := NewUserUseCase(users, &memRecommends{path: map[uint64]string{}}, stubVerifier{}, stubTokens{}, &conf.Auth{}, addrGenesis, place)
 	if _, err := uc.EthAuthorize(context.Background(), addrGenesis, "sig", ""); err != nil {
 		t.Fatal(err)

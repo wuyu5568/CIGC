@@ -8,7 +8,7 @@ services:
       MYSQL_DATABASE: cigc
       TZ: Asia/Shanghai
     ports:
-      - "3306:3306"
+      - "127.0.0.1:3306:3306"
     volumes:
       - mysql-data:/var/lib/mysql
       - ./scripts/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
@@ -39,9 +39,23 @@ services:
       CIGC_ADMIN_PASSWORD: ${CIGC_ADMIN_PASSWORD:?set CIGC_ADMIN_PASSWORD}
       CIGC_GENESIS_ADDRESS: ${CIGC_GENESIS_ADDRESS:-0x8Bd86ad98D9fA366E52CFB5c08a3e33f5f412Fb1}
       CIGC_ALLOW_FORCE_SETTLE: ${CIGC_ALLOW_FORCE_SETTLE:-true}
+      CIGC_FULL_DOWNLINE: ${CIGC_FULL_DOWNLINE:-false}
+      CIGC_SETTLE_CRON: ${CIGC_SETTLE_CRON:-0 0 * * *}
+      CIGC_SETTLE_TIMEZONE: ${CIGC_SETTLE_TIMEZONE:-Asia/Shanghai}
+      CIGC_BSC_RPC: ${CIGC_BSC_RPC:-https://bsc-dataseed.binance.org/}
+      CIGC_USDT_ADDRESS: ${CIGC_USDT_ADDRESS:-0x55d398326f99059fF775485246999027B3197955}
+      CIGC_BUY_CONTRACT: ${CIGC_BUY_CONTRACT:-0xCb63733FB936c7B3f147C757D383645e55769bF3}
+      CIGC_RECEIVE_ADDRESS: ${CIGC_RECEIVE_ADDRESS:-}
+      CIGC_RECEIVE_ADDRESSES: ${CIGC_RECEIVE_ADDRESSES:-}
+      CIGC_DEPOSIT_CRON: ${CIGC_DEPOSIT_CRON:-}
+      CIGC_DEPOSIT_CONFIRMATIONS: ${CIGC_DEPOSIT_CONFIRMATIONS:-12}
+      CIGC_PAYOUT_ENABLED: ${CIGC_PAYOUT_ENABLED:-false}
+      CIGC_PAYOUT_CRON: ${CIGC_PAYOUT_CRON:-}
+      CIGC_PAYOUT_MAX_USDT: ${CIGC_PAYOUT_MAX_USDT:-}
+      CIGC_HOT_WALLET_KEY: ${CIGC_HOT_WALLET_KEY:-}
       TZ: Asia/Shanghai
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8000/health"]
       interval: 10s

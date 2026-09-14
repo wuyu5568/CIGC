@@ -16,4 +16,7 @@ var ProviderSet = wire.NewSet(
 	NewUserBalanceRepo,
 	NewPlacementRepo,
 	NewMatchRepo,
+	NewChainCursorRepo,
+	NewChainDepositRepo,
+	NewChainReader,
 )

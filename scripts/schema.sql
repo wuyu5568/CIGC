@@ -6,7 +6,12 @@ CREATE TABLE IF NOT EXISTS users (
     address            VARCHAR(64)     NOT NULL COMMENT 'wallet address lowercase',
     inviter_id         BIGINT UNSIGNED NULL COMMENT 'inviter user id, null for genesis',
     available_balance  DECIMAL(36, 8)  NOT NULL DEFAULT 0 COMMENT 'internal reward balance',
-    frozen_balance     DECIMAL(36, 8)  NOT NULL DEFAULT 0 COMMENT 'withdraw freeze',
+    recharge_balance   DECIMAL(36, 8)  NOT NULL DEFAULT 0 COMMENT 'buy-only USDT from recharge page',
+    frozen_balance     DECIMAL(36, 8)  NOT NULL DEFAULT 0 COMMENT 'usdt withdraw freeze',
+    frozen_ispay       DECIMAL(36, 8)  NOT NULL DEFAULT 0 COMMENT 'ispay withdraw freeze',
+    ispay_balance      DECIMAL(36, 8)  NOT NULL DEFAULT 0 COMMENT 'ispay coin balance',
+    lock_balance       DECIMAL(36, 8)  NOT NULL DEFAULT 0 COMMENT 'inactive reward USDT; not withdrawable',
+    lock_ispay         DECIMAL(36, 8)  NOT NULL DEFAULT 0 COMMENT 'inactive reward ispay',
     paid_amount        DECIMAL(36, 8)  NOT NULL DEFAULT 0 COMMENT 'cumulative paid order amount',
     cap_effective      DECIMAL(36, 8)  NOT NULL DEFAULT 0 COMMENT 'daily match cap used by settle',
     disabled_at        DATETIME(3)     NULL COMMENT 'soft delete / disabled',
@@ -45,8 +50,9 @@ CREATE TABLE IF NOT EXISTS packages (
     amount      DECIMAL(36, 8)  NOT NULL,
     title       VARCHAR(128)    NOT NULL,
     goods_desc  VARCHAR(512)    NOT NULL DEFAULT '',
-    daily_cap   DECIMAL(36, 8)  NOT NULL COMMENT 'match cap when paid_amount reaches this package amount',
-    sort_order  INT             NOT NULL DEFAULT 0,
+    daily_cap     DECIMAL(36, 8)  NOT NULL COMMENT 'match cap of this package (max paid order, not sum)',
+    release_days  INT             NOT NULL DEFAULT 300 COMMENT '300|600|750 default static release',
+    sort_order    INT             NOT NULL DEFAULT 0,
     enabled     TINYINT(1)      NOT NULL DEFAULT 1,
     created_at  DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     updated_at  DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
@@ -70,6 +76,7 @@ ON DUPLICATE KEY UPDATE title = VALUES(title), goods_desc = VALUES(goods_desc),
 
 CREATE TABLE IF NOT EXISTS orders (
     id              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    order_no        VARCHAR(32)     NULL,
     user_id         BIGINT UNSIGNED NOT NULL,
     package_id      BIGINT UNSIGNED NOT NULL,
     amount          DECIMAL(36, 8)  NOT NULL,
@@ -78,12 +85,14 @@ CREATE TABLE IF NOT EXISTS orders (
     status          VARCHAR(16)     NOT NULL DEFAULT 'pending' COMMENT 'pending|confirming|paid|abnormal',
     tx_hash         VARCHAR(80)     NULL COMMENT 'set on chain match; NULL until paid',
     log_index       INT             NOT NULL DEFAULT 0,
+    release_days    INT             NOT NULL DEFAULT 0 COMMENT '300|600|750 static release',
     paid_at         DATETIME(3)     NULL,
     created_at      DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     updated_at      DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     KEY idx_orders_user (user_id),
     KEY idx_orders_status (status),
     KEY idx_orders_package (package_id),
+    UNIQUE KEY uk_orders_no (order_no),
     UNIQUE KEY uk_orders_chain_event (tx_hash, log_index),
     CONSTRAINT fk_orders_user FOREIGN KEY (user_id) REFERENCES users (id),
     CONSTRAINT fk_orders_package FOREIGN KEY (package_id) REFERENCES packages (id)
@@ -114,6 +123,7 @@ CREATE TABLE IF NOT EXISTS withdraws (
     amount          DECIMAL(36, 8)  NOT NULL,
     fee_amount      DECIMAL(36, 8)  NOT NULL DEFAULT 0,
     credited_amount DECIMAL(36, 8)  NOT NULL DEFAULT 0,
+    asset           VARCHAR(16)     NOT NULL DEFAULT 'usdt' COMMENT 'usdt|ispay',
     status          VARCHAR(16)     NOT NULL DEFAULT 'pending' COMMENT 'pending|rewarded|doing|pass|rejected|cancelled',
     remark          VARCHAR(255)    NOT NULL DEFAULT '',
     tx_hash         VARCHAR(80)     NOT NULL DEFAULT '',
@@ -141,7 +151,11 @@ INSERT INTO business_configs (config_key, name, value, sort_order) VALUES
 ('direct_rate', '直推奖励比例', '0.10', 10),
 ('match_rate', '对碰奖励比例', '0.10', 20),
 ('manage_rate', '三代管理奖励比例', '0.30', 30),
-('min_withdraw_amount', '最低提现金额', '10', 40)
+('min_withdraw_amount', '最低提现金额', '10', 40),
+('withdraw_fee_rate', 'USDT提现手续费比例', '0.10', 45),
+('withdraw_daily_limit', 'USDT每日提现上限', '1000', 46),
+('withdraw_daily_limit_ispay', 'ISPAY每日提现上限', '1000', 47),
+('ispay_price', '测试 ispay 现价（U）', '2000', 50)
 ON DUPLICATE KEY UPDATE name = VALUES(name), value = VALUES(value), sort_order = VALUES(sort_order);
 
 -- 日结防重（金牛口径：上海自然日唯一占位）
@@ -154,6 +168,7 @@ CREATE TABLE IF NOT EXISTS settle_runs (
     direct_count   INT             NOT NULL DEFAULT 0,
     match_count    INT             NOT NULL DEFAULT 0,
     manage_count   INT             NOT NULL DEFAULT 0,
+    static_count   INT             NOT NULL DEFAULT 0,
     remark         VARCHAR(255)    NOT NULL DEFAULT '',
     created_at     DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     updated_at     DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
@@ -190,4 +205,30 @@ CREATE TABLE IF NOT EXISTS match_order_applied (
     settle_date DATE            NOT NULL,
     created_at  DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     CONSTRAINT fk_match_applied_order FOREIGN KEY (order_id) REFERENCES orders (id)
+) ENGINE=InnoDB DEFAULT CHARSET utf8mb4;
+
+-- 链上扫块游标
+CREATE TABLE IF NOT EXISTS chain_scan_cursors (
+    name         VARCHAR(64)     NOT NULL PRIMARY KEY,
+    block_number BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    updated_at   DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
+) ENGINE=InnoDB DEFAULT CHARSET utf8mb4;
+
+-- 链上入账事件（匹配成功写 order；对不上为 abnormal，不入账）
+CREATE TABLE IF NOT EXISTS chain_deposits (
+    id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    tx_hash      VARCHAR(80)     NOT NULL,
+    log_index    INT             NOT NULL,
+    from_addr    VARCHAR(64)     NOT NULL,
+    to_addr      VARCHAR(64)     NOT NULL,
+    amount       DECIMAL(36, 8)  NOT NULL,
+    block_number BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    status       VARCHAR(16)     NOT NULL COMMENT 'matched|abnormal|skipped',
+    order_id     BIGINT UNSIGNED NULL,
+    remark       VARCHAR(255)    NOT NULL DEFAULT '',
+    created_at   DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    UNIQUE KEY uk_chain_deposits_event (tx_hash, log_index),
+    KEY idx_chain_deposits_from (from_addr),
+    KEY idx_chain_deposits_status (status),
+    CONSTRAINT fk_chain_deposits_order FOREIGN KEY (order_id) REFERENCES orders (id)
 ) ENGINE=InnoDB DEFAULT CHARSET utf8mb4;

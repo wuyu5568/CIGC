@@ -1,0 +1,25 @@
+{
+  "name": "ms-token-hardhat-v12",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "compile": "hardhat compile",
+    "deploy:user": "hardhat run scripts/deploy-user.js --network bsc",
+    "deploy:dividend": "hardhat run scripts/deploy-dividend.js --network bsc",
+    "deploy:staking": "hardhat run scripts/deploy-staking.js --network bsc",
+    "deploy:token": "hardhat run scripts/deploy-token.js --network bsc",
+    "deploy:gateway": "hardhat run scripts/deploy-gateway.js --network bsc",
+    "deploy:view": "hardhat run scripts/deploy-view.js --network bsc",
+    "deploy:all": "hardhat run scripts/deploy-all.js --network bsc"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-ethers": "^3.0.8",
+    "@nomicfoundation/hardhat-verify": "^2.1.3",
+    "dotenv": "^16.4.5",
+    "ethers": "^6.13.2",
+    "hardhat": "^2.22.10"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.0.2"
+  }
+}

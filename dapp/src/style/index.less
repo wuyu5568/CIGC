@@ -1,0 +1,247 @@
+/* 此文件为项目全局样式 */
+:root {
+    --van-primary-color: #3e3e3e;  /* 主色 */
+    --van-background-color: #121212; /* 背景色 */
+    --van-text-color: #FFF;
+    --van-background-2: #29313C;
+    --van-cell-active-color: #29313C;
+    --van-picker-mask-color: none;
+    --van-border-color: #555;
+    --van-cell-border-color: none;
+    --van-nav-bar-icon-color: #FFF;
+    --van-nav-bar-background: none;
+    --van-border-color: none;
+    --van-action-bar-height: 60px;
+    --van-action-bar-button-danger-color: #ffd127;
+    --van-button-danger-color: #171c21;
+    --van-tabs-bottom-bar-color: 0% 0% / cover rgb(255, 209, 39);
+    --van-tab-text-color: rgb(204, 204, 204);
+    --van-empty-image-size: 60px;
+    --van-nav-bar-text-color: rgb(204, 204, 204);
+    --van-dialog-confirm-button-text-color: #FFF;
+    --van-dialog-message-font-size: 14px;
+    --van-dialog-has-title-message-text-color: #FFF;
+    --van-action-sheet-cancel-padding-color: rgba(0, 0, 0, .2);
+    --van-gray-2: rgba(0, 0, 0, .1);
+    --van-button-default-border-color: none;
+    // --van-text-color: #ffffff;      /* 文字颜色 */
+}
+
+body {
+    font-size: 14px !important;
+    color: #FFF;
+    background: #171C21;
+    img {
+        display: block;
+    }
+    p{
+        margin: 0;
+    }
+}
+
+.icon-isps {
+    background: url('../assets/images/biw-logo.jpg') no-repeat;
+    background-size: 100% 100%;
+}
+
+.ant-tree {
+  background: none;
+}
+.ant-tree-list-holder-inner {
+    color: #FFF;
+    padding: 10px 0;
+}
+
+/* 自定义选择器样式 */
+.custom-picker {
+    color: #FFF;
+    .custom-picker-header {
+        background: @c1;
+        border-bottom: 1px solid @c7;
+        padding: 10px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        .custom-picker-title {
+            color: #FFF;
+            font-size: 16px;
+        }
+        .custom-picker-close {
+            color: #FFF;
+            cursor: pointer;
+        }
+    }
+    .custom-picker-item {
+        font-size: 14px;
+        color: #999;
+    }
+    .custom-picker-item-selected {
+        color: #000;
+    }
+}
+
+.address-modal {
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, .7);
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 602;
+    .address-modal-main {
+      width: 90%;
+      min-height: 200px;
+      background: #222;
+      border: 1px solid #444;
+      border-radius: 6px;
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      flex-direction: column;
+      padding: 20px;
+      box-sizing:border-box;
+      -moz-box-sizing:border-box;
+      -webkit-box-sizing:border-box;
+      gap: 10px;
+      position: relative;
+      .modal-close-btn {
+        width: 20px;
+        height: 20px;
+        background: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAQAAAC1+jfqAAAAU0lEQVR42mP4r/A/mQEH+N/w3wFE/P+/Cqv0KqBMA5iBoQQuisbBlMYUwOShCuKURkggpHEpQUgTVkDYCsKOJOxNwgFFOKj/J+ONrAIgA290KwAAlIGWh6x6hwAAAAAASUVORK5CYII=') no-repeat center center;
+        position: absolute;
+        right: 10px;
+        top: 10px;
+      }
+      .address-title {
+        width: 80%;
+        padding: 0 40px;
+        word-wrap: break-word;
+        word-break: normal;
+        text-align: center;
+        font-weight: bold;
+        font-size: 18px;
+        margin-bottom: 0;
+      }
+      .address-text {
+        width: 80%;
+        padding: 0 40px;
+        word-wrap: break-word;
+        word-break: normal;
+        font-size: 16px;
+        text-align: center;
+        margin-bottom: 20px;
+      }
+      .address-copy-btn {
+        width: 60%;
+        height: 40px;
+        background: #25eeb1;
+        border-radius: 6px;
+        color: #000;
+        font-weight: bold;
+        display: inline-block;
+      }
+    }
+  }
+  .toolbar {
+    background: none;
+    &::before {
+        display: none;
+    }
+    .toolbar-inner {
+        background: none;
+        border: 0;
+        .tab-link {
+            color: #CCC;
+            background: none;
+        }
+        .tab-link-active {
+            color: #FCD434;
+        }
+    }
+  }
+
+  .empty-data {
+    width: 100%;
+    height: 200px;
+    background: url('../assets/images/empty.png') no-repeat center center;
+    background-size: 140px 140px;
+    opacity: .3;
+  }
+
+  .ios-translucent-modals .dialog {
+    background-color: #333;
+    color: #FFF;
+    .dialog-title {
+        font-size: 14px;
+        color: #FFF;
+    }
+    .dialog-input {
+        margin-bottom: 10px;
+        background: #FFF;
+        color: #000;
+        border: 1px solid rgba(255, 255, 255, .2)
+    }
+    .dialog-button {
+        color: #FFF;
+        font-size: 15px;
+    }
+  }
+
+  .van-pagination {
+    width: 150px;
+    margin: 0 auto;
+    margin-top: 20px;
+    .van-pagination__item {
+      background: none;
+      color: #FFF;
+      &:active {
+        background-color: initial; /* 保持原背景色 */
+      }
+      &::after {
+        display: none;
+      }
+      button {
+        background: none;
+        background: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAAV1BMVEVHcEz1kR33kx72kh70kx72kh32lB72kx74kx34kx71kR73kx73lB72kh32kx32kh72kh32kR72kx34lB33kh73kx73kh33kh33lB73kx33lB73kx33kx53bkcfAAAAHHRSTlMAgKp/THhdVW9MM2ZDv5Wem5iRlOWopaKNioaDjGIE5AAAAGJJREFUeF7NyjcOwDAMwEApTu+96v/vDGAgo801XI/ypZ1KLDUzFxtWg6M3OpJfHRkeJR4NHjkeBR4pHi0edXjY/FAFffeuQT/AB/ARfAJfwGfwE/wCv8EfcAcu5KLgIhrwF9++EbHVu80CAAAAAElFTkSuQmCC') no-repeat center center;
+        background-size: 16px 16px;
+        font-size: 0;
+        text-indent: -9999px;
+        -webkit-tap-highlight-color: transparent; /* 兼容iOS/Safari */
+        outline: none; /* 去除焦点边框 */
+        &:active {
+          background-color: initial; /* 保持原背景色 */
+        }
+      }
+    }
+    .van-pagination__item--prev {
+      transform: rotate(180deg);
+    }
+  }
+  img {
+    max-width: 100%;
+  }
+
+  .van-dialog__message {
+    overflow: hidden;
+    input {
+      color: #333;
+    }
+  }
+  .van-dialog__footer {
+    border-top: 1px solid #555;
+  }
+  .van-dialog__content {
+    padding: 0;
+  }
+  .van-action-sheet__gap {
+    height: 2px;
+  }
+  .van-field__control {
+    &::placeholder {
+      color: #666;
+    }
+  }

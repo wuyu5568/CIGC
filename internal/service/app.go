@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -12,6 +13,8 @@ import (
 	"github.com/cigc/app/internal/conf"
 	"github.com/cigc/app/internal/data"
 	"github.com/cigc/app/internal/pkg/middleware/auth"
+	"github.com/cigc/app/internal/pkg/money"
+	"github.com/cigc/app/internal/pkg/wallet"
 	kerrors "github.com/go-kratos/kratos/v3/errors"
 	"github.com/google/wire"
 	"github.com/shopspring/decimal"
@@ -28,13 +31,18 @@ type AppService struct {
 	ledger   *biz.LedgerUseCase
 	withdraw *biz.WithdrawUseCase
 	place    *biz.PlacementUseCase
+	deposit  *biz.DepositUseCase
+	configs  *biz.ConfigUseCase
+	adjust   *biz.AdjustUseCase
+	stats    *biz.StatsUseCase
 	ping     *data.Data
 	auth     *conf.Auth
+	app      *conf.App
 }
 
 // NewAppService 构造 HTTP 适配器。
-func NewAppService(users *biz.UserUseCase, orders *biz.OrderUseCase, settle *biz.SettleUseCase, ledger *biz.LedgerUseCase, withdraw *biz.WithdrawUseCase, place *biz.PlacementUseCase, ping *data.Data, auth *conf.Auth) *AppService {
-	return &AppService{users: users, orders: orders, settle: settle, ledger: ledger, withdraw: withdraw, place: place, ping: ping, auth: auth}
+func NewAppService(users *biz.UserUseCase, orders *biz.OrderUseCase, settle *biz.SettleUseCase, ledger *biz.LedgerUseCase, withdraw *biz.WithdrawUseCase, place *biz.PlacementUseCase, deposit *biz.DepositUseCase, configs *biz.ConfigUseCase, adjust *biz.AdjustUseCase, stats *biz.StatsUseCase, ping *data.Data, auth *conf.Auth, app *conf.App) *AppService {
+	return &AppService{users: users, orders: orders, settle: settle, ledger: ledger, withdraw: withdraw, place: place, deposit: deposit, configs: configs, adjust: adjust, stats: stats, ping: ping, auth: auth, app: app}
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -67,7 +75,7 @@ func decodeJSON(r *http.Request, dst any) error {
 }
 
 func decStr(d decimal.Decimal) string {
-	return d.Round(8).StringFixed(8)
+	return money.Display(d)
 }
 
 func parseAmount(s string) (decimal.Decimal, error) {
@@ -133,6 +141,8 @@ func (s *AppService) CompatEthAuthorize(w http.ResponseWriter, r *http.Request) 
 			writeJSON(w, http.StatusOK, map[string]string{"status": "请输入推荐码"})
 		case errors.Is(err, biz.ErrInviteInvalid):
 			writeJSON(w, http.StatusOK, map[string]string{"status": "无效的推荐码"})
+		case errors.Is(err, biz.ErrInvalidSignature):
+			writeJSON(w, http.StatusOK, map[string]string{"status": "签名失败"})
 		default:
 			writeJSON(w, http.StatusOK, map[string]string{"status": "fail"})
 		}
@@ -164,15 +174,27 @@ func (s *AppService) CompatUserInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	goods := make([]map[string]any, 0, len(pkgs))
 	for _, p := range pkgs {
-		goods = append(goods, map[string]any{
-			"id":       p.ID,
-			"amount":   decStr(p.Amount),
-			"title":    p.Title,
-			"goods":    p.GoodsDesc,
-			"dailyCap": decStr(p.DailyCap),
-		})
+		goods = append(goods, packageJSON(p))
 	}
 	avail := decStr(user.AvailableBalance)
+	recharge := decStr(user.RechargeBalance)
+	vol, err := s.place.TeamVolumeOf(r.Context(), user.ID)
+	if err != nil {
+		writeBizError(w, err)
+		return
+	}
+	unlock := biz.ComputeLockUnlock(user, false)
+	if s.settle != nil {
+		unlock, err = s.settle.PreviewUserLockUnlock(r.Context(), user)
+		if err != nil {
+			writeBizError(w, err)
+			return
+		}
+	}
+	var limits biz.WithdrawLimits
+	if s.withdraw != nil {
+		limits = s.withdraw.UserLimits(r.Context(), user.ID)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":            "ok",
 		"address":           user.Address,
@@ -180,30 +202,51 @@ func (s *AppService) CompatUserInfo(w http.ResponseWriter, r *http.Request) {
 		"usdt":              avail,
 		"raw":               avail,
 		"amountGet":         avail,
-		"amountUsdt":        avail,
+		"amountUsdt":        recharge,
+		"rechargeBalance":   recharge,
 		"inviteUserAddress": inviteAddr,
-		"withdrawRate":      "0",
-		"withdrawMin":       "0",
+		"withdrawRate":      decStr(limits.Rate),
+		"withdrawMin":       decStr(limits.Min),
 		"withdrawRateTwo":   "0",
 		"withdrawMinTwo":    "0",
+		"withdrawDaily":     decStr(limits.Daily),
+		"withdrawToday":     decStr(limits.Today),
+		"withdrawRemain":    decStr(limits.Remain),
+		"withdrawDailyTwo":  decStr(limits.DailyTwo),
+		"withdrawTodayTwo":  decStr(limits.TodayTwo),
+		"withdrawRemainTwo": decStr(limits.RemainTwo),
 		"locationNum":       "0",
 		"LocationList":      []any{},
-		"total":             "0.00000000",
-		"max":               "0.00000000",
-		"min":               "0.00000000",
+		"total":             decStr(vol.Total),
+		"max":               decStr(vol.Max),
+		"min":               decStr(vol.Min),
 		"buy":               decStr(user.PaidAmount),
-		"amountGetSub":      "0.00000000",
+		"amountGetSub":      "0",
 		"outNum":            "0",
-		"location":          "0.00000000",
-		"recommend":         "0.00000000",
-		"recommendTwo":      "0.00000000",
-		"team":              "0.00000000",
-		"teamTwo":           "0.00000000",
+		"location":          "0",
+		"recommend":         "0",
+		"recommendTwo":      "0",
+		"team":              "0",
+		"teamTwo":           "0",
 		"all":               avail,
 		"notice":            "",
 		"goods":             goods,
 		"capEffective":      decStr(user.CapEffective),
 		"frozen":            decStr(user.FrozenBalance),
+		"frozenIspay":       decStr(user.FrozenIspay),
+		"lock":              decStr(user.LockBalance),
+		"lockBalance":       decStr(user.LockBalance),
+		"lockIspay":         decStr(user.LockIspay),
+		"unlockToday":       decStr(unlock.UnlockTodayUSDT),
+		"unlockTodayIspay":  decStr(unlock.UnlockTodayIspay),
+		"todayLockReleased": unlock.TodayReleased,
+		"activated":         user.IsActivated(),
+		"ispay":             decStr(user.IspayBalance),
+		"ispayAmount":       decStr(user.IspayBalance),
+		"ispayPrice":        decStr(s.ispaySpot(r.Context())),
+		"receive_addresses": s.receiveJSON(decimal.Zero),
+		"release_tiers":     releaseTiersJSON(),
+		"buy_contract":      s.buyContract(),
 	})
 }
 
@@ -215,15 +258,42 @@ func (s *AppService) CompatPackageList(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]map[string]any, 0, len(pkgs))
 	for _, p := range pkgs {
-		items = append(items, map[string]any{
-			"id":        p.ID,
-			"amount":    decStr(p.Amount),
-			"title":     p.Title,
-			"goods":     p.GoodsDesc,
-			"daily_cap": decStr(p.DailyCap),
-		})
+		items = append(items, packageJSON(p))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "items": items})
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "items": items, "release_tiers": releaseTiersJSON(), "ispay_price": decStr(s.ispaySpot(r.Context())), "buy_contract": s.buyContract()})
+}
+
+func packageJSON(p *biz.Package) map[string]any {
+	if p == nil {
+		return map[string]any{}
+	}
+	days := p.ReleaseDays
+	if !biz.ValidReleaseDays(days) {
+		days = biz.ReleaseDays300
+	}
+	return map[string]any{
+		"id":           p.ID,
+		"amount":       decStr(p.Amount),
+		"title":        p.Title,
+		"goods":        p.GoodsDesc,
+		"name":         p.Title,
+		"one":          p.GoodsDesc,
+		"dailyCap":     decStr(p.DailyCap),
+		"daily_cap":    decStr(p.DailyCap),
+		"release_days": days,
+		"days":         days,
+		"sort_order":   p.SortOrder,
+		"sortOrder":    p.SortOrder,
+		"enabled":      p.Enabled,
+		"status":       enabledStatus(p.Enabled),
+	}
+}
+
+func enabledStatus(on bool) string {
+	if on {
+		return "1"
+	}
+	return "0"
 }
 
 func (s *AppService) CompatBuy(w http.ResponseWriter, r *http.Request) {
@@ -233,7 +303,9 @@ func (s *AppService) CompatBuy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Amount json.RawMessage `json:"amount"`
+		Amount      json.RawMessage `json:"amount"`
+		Days        json.RawMessage `json:"days"`
+		ReleaseDays json.RawMessage `json:"release_days"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "fail"})
@@ -245,23 +317,185 @@ func (s *AppService) CompatBuy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "金额错误"})
 		return
 	}
-	o, err := s.orders.CreateOrder(r.Context(), uid, amount)
+	_ = r.ParseForm()
+	days, err := parseReleaseDays(firstNonEmpty(strings.Trim(string(body.ReleaseDays), `"`), strings.Trim(string(body.Days), `"`), r.Form.Get("release_days"), r.Form.Get("days")))
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "请选择释放天数"})
+		return
+	}
+	o, err := s.orders.BuyWithRecharge(r.Context(), uid, amount, days)
 	if err != nil {
 		switch {
 		case errors.Is(err, biz.ErrPackageNotFound), errors.Is(err, biz.ErrPackageDisabled):
 			writeJSON(w, http.StatusOK, map[string]string{"status": "套餐不存在"})
 		case errors.Is(err, biz.ErrInvalidAmount):
 			writeJSON(w, http.StatusOK, map[string]string{"status": "金额错误"})
+		case errors.Is(err, biz.ErrInvalidReleaseDays):
+			writeJSON(w, http.StatusOK, map[string]string{"status": "请选择释放天数"})
+		case errors.Is(err, biz.ErrInsufficientBalance):
+			writeJSON(w, http.StatusOK, map[string]string{"status": "充值余额不足"})
 		default:
 			writeJSON(w, http.StatusOK, map[string]string{"status": "fail"})
 		}
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":   "ok",
-		"order_id": o.ID,
-		"amount":   decStr(o.Amount),
+		"status":          "ok",
+		"order_id":        o.ID,
+		"amount":          decStr(o.Amount),
+		"release_days":    o.ReleaseDays,
+		"order_status":    o.Status,
+		"rechargeBalance": decStr(s.userRecharge(r.Context(), uid)),
+		"buy_contract":    s.buyContract(),
 	})
+}
+
+func (s *AppService) userRecharge(ctx context.Context, uid uint64) decimal.Decimal {
+	if s == nil || s.users == nil {
+		return decimal.Zero
+	}
+	u, err := s.users.GetProfile(ctx, uid)
+	if err != nil || u == nil {
+		return decimal.Zero
+	}
+	return u.RechargeBalance
+}
+
+func (s *AppService) CompatDepositList(w http.ResponseWriter, r *http.Request) {
+	uid, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
+		writeBizError(w, biz.ErrUnauthorized)
+		return
+	}
+	page, err := s.deposit.ListUser(r.Context(), uid, parsePage(r))
+	if err != nil {
+		writeBizError(w, err)
+		return
+	}
+	list := make([]map[string]any, 0, len(page.Items))
+	for _, d := range page.Items {
+		list = append(list, depositJSON(d))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "ok",
+		"list":   list,
+		"count":  strconv.Itoa(page.Total),
+	})
+}
+
+func depositJSON(d *biz.ChainDeposit) map[string]any {
+	if d == nil {
+		return map[string]any{}
+	}
+	return map[string]any{
+		"id":          d.ID,
+		"address":     d.FromAddr,
+		"amount":      decStr(d.Amount),
+		"status":      d.Status,
+		"txHash":      d.TxHash,
+		"toAddr":      d.ToAddr,
+		"one":         d.Remark,
+		"remark":      d.Remark,
+		"blockNumber": d.BlockNumber,
+		"createdAt":   d.CreatedAt.Format("2006-01-02 15:04:05"),
+	}
+}
+
+func parseReleaseDays(s string) (int, error) {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "null" {
+		return 0, biz.ErrInvalidReleaseDays
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || !biz.ValidReleaseDays(n) {
+		return 0, biz.ErrInvalidReleaseDays
+	}
+	return n, nil
+}
+
+func releaseTiersJSON() []map[string]any {
+	return []map[string]any{
+		{"days": 300, "price": "1200"},
+		{"days": 600, "price": "1000"},
+		{"days": 750, "price": "800"},
+	}
+}
+
+func (s *AppService) CompatIspayPrice(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "ok",
+		"price":  decStr(s.ispaySpot(r.Context())),
+		"source": "business_configs",
+	})
+}
+
+func (s *AppService) ispaySpot(ctx context.Context) decimal.Decimal {
+	if s != nil && s.configs != nil {
+		return s.configs.Spot(ctx)
+	}
+	return biz.IspaySpotFallback()
+}
+
+func (s *AppService) buyContract() string {
+	if s == nil || s.app == nil {
+		return ""
+	}
+	return wallet.NormalizeOrEmpty(s.app.BuyContract)
+}
+
+func (s *AppService) receiveJSON(amount decimal.Decimal) []map[string]any {
+	if s == nil || s.deposit == nil {
+		return []map[string]any{}
+	}
+	var items []ReceivePayView
+	if amount.IsPositive() {
+		items = payItems(s.deposit.PayPlan(amount))
+	} else {
+		items = shareItems(s.deposit.Shares())
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, it := range items {
+		row := map[string]any{
+			"address": it.Address,
+			"percent": it.Percent,
+		}
+		if it.HasAmount {
+			row["amount"] = it.Amount
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+type ReceivePayView struct {
+	Address   string
+	Percent   string
+	Amount    string
+	HasAmount bool
+}
+
+func shareItems(shares []biz.ReceiveShare) []ReceivePayView {
+	out := make([]ReceivePayView, 0, len(shares))
+	for _, s := range shares {
+		out = append(out, ReceivePayView{
+			Address: s.Address,
+			Percent: s.Percent.String(),
+		})
+	}
+	return out
+}
+
+func payItems(plan []biz.ReceivePayItem) []ReceivePayView {
+	out := make([]ReceivePayView, 0, len(plan))
+	for _, it := range plan {
+		out = append(out, ReceivePayView{
+			Address:   it.Address,
+			Percent:   it.Percent.String(),
+			Amount:    decStr(it.Amount),
+			HasAmount: true,
+		})
+	}
+	return out
 }
 
 func (s *AppService) CompatOrderList(w http.ResponseWriter, r *http.Request) {
@@ -275,14 +509,33 @@ func (s *AppService) CompatOrderList(w http.ResponseWriter, r *http.Request) {
 		writeBizError(w, err)
 		return
 	}
+	releases := map[uint64]biz.OrderStaticRelease{}
+	if s.settle != nil {
+		releases, err = s.settle.OrderStaticReleases(r.Context(), rows)
+		if err != nil {
+			writeBizError(w, err)
+			return
+		}
+	}
 	items := make([]map[string]any, 0, len(rows))
 	for _, o := range rows {
+		rel := releases[o.ID]
 		item := map[string]any{
-			"id":     o.ID,
-			"amount": decStr(o.Amount),
-			"title":  o.TitleSnapshot,
-			"goods":  o.GoodsSnapshot,
-			"status": o.Status,
+			"id":             o.ID,
+			"order_no":       o.DisplayNo(),
+			"amount":         decStr(o.Amount),
+			"title":          o.TitleSnapshot,
+			"goods":          o.GoodsSnapshot,
+			"status":         o.Status,
+			"release_days":   o.ReleaseDays,
+			"buy_contract":   s.buyContract(),
+			"today_usdt":     decStr(rel.TodayUSDT),
+			"today_ispay":    decStr(rel.TodayIspay),
+			"released_usdt":  decStr(rel.ReleasedUSDT),
+			"released_ispay": decStr(rel.ReleasedIspay),
+			"pending_usdt":   decStr(rel.PendingUSDT),
+			"pending_ispay":  decStr(rel.PendingIspay),
+			"settle_date":    rel.SettleDate,
 		}
 		if o.PaidAt != nil {
 			item["paid_at"] = o.PaidAt.Format("2006-01-02 15:04:05")
@@ -393,6 +646,33 @@ func (s *AppService) CompatAdminSettle(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *AppService) CompatAdminDepositScan(w http.ResponseWriter, r *http.Request) {
+	if s.deposit == nil || !s.deposit.Enabled() {
+		writeJSON(w, http.StatusOK, map[string]any{"status": "disabled", "enabled": false})
+		return
+	}
+	res, err := s.deposit.Scan(r.Context())
+	if err != nil {
+		writeBizError(w, err)
+		return
+	}
+	status := "ok"
+	if res.Skipped {
+		status = "skipped"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":       status,
+		"enabled":      true,
+		"from_block":   res.FromBlock,
+		"to_block":     res.ToBlock,
+		"head_block":   res.HeadBlock,
+		"seen":         res.Seen,
+		"matched":      res.Matched,
+		"abnormal":     res.Abnormal,
+		"already_seen": res.AlreadySeen,
+	})
+}
+
 func (s *AppService) CompatAdminSettleStatus(w http.ResponseWriter, r *http.Request) {
 	st, err := s.settle.Status(r.Context())
 	if err != nil {
@@ -403,6 +683,7 @@ func (s *AppService) CompatAdminSettleStatus(w http.ResponseWriter, r *http.Requ
 		"status":             "ok",
 		"settle_today":       st.TodayDate,
 		"settle_today_done":  st.TodaySettled,
+		"settle_next_test":   st.NextTestDate,
 		"allow_force_settle": st.AllowForce,
 	}
 	if st.Today != nil {
@@ -429,7 +710,7 @@ func settleRunJSON(run *biz.SettleRun) map[string]any {
 
 func settleForceWarning(res *biz.SettleResult) string {
 	if res != nil && res.Forced {
-		return "force=1 may rewrite caps again; test only"
+		return "force=1 settles the next day; test only"
 	}
 	return ""
 }
@@ -487,7 +768,7 @@ func (s *AppService) CompatRewardList(w http.ResponseWriter, r *http.Request) {
 		list = append(list, map[string]any{
 			"id":        it.ID,
 			"amount":    it.Amount,
-			"amountTwo": it.Amount,
+			"amountTwo": it.AmountTwo,
 			"reward":    it.Amount,
 			"name":      it.Name,
 			"address":   it.Address,
@@ -516,16 +797,27 @@ func (s *AppService) CompatAdminRewardList(w http.ResponseWriter, r *http.Reques
 	rewards := make([]map[string]any, 0, len(page.Items))
 	for _, it := range page.Items {
 		rewards = append(rewards, map[string]any{
-			"id":        it.ID,
-			"amount":    it.Amount,
-			"amountTwo": it.Amount,
-			"reward":    it.Amount,
-			"name":      it.Name,
-			"address":   it.Address,
-			"num":       it.Num,
-			"reason":    it.Reason,
-			"remark":    it.Remark,
-			"createdAt": it.CreatedAt.Format("2006-01-02 15:04:05"),
+			"id":          it.ID,
+			"amount":      it.Amount,
+			"amountTwo":   it.AmountTwo,
+			"reward":      it.Amount,
+			"name":        it.Name,
+			"category":    it.Category,
+			"address":     it.Address,
+			"num":         it.Num,
+			"reason":      it.Reason,
+			"remark":      it.Remark,
+			"detail":      it.Detail,
+			"balance":     it.BalanceKind,
+			"balanceName": it.BalanceName,
+			"orderId":        it.OrderID,
+			"orderNo":        it.OrderNo,
+			"orderAmount":    it.OrderAmount,
+			"orderTitle":     it.OrderTitle,
+			"orderSource":    it.OrderSource,
+			"sourceAddress":  it.SourceAddress,
+			"settleDate":     it.SettleDate,
+			"createdAt":   it.CreatedAt.Format("2006-01-02 15:04:05"),
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -534,7 +826,7 @@ func (s *AppService) CompatAdminRewardList(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-func zeroStr() string { return "0.00000000" }
+func zeroStr() string { return "0" }
 
 func (s *AppService) CompatAdminBuyList(w http.ResponseWriter, r *http.Request) {
 	page, err := s.orders.ListAdminOrders(
@@ -550,15 +842,17 @@ func (s *AppService) CompatAdminBuyList(w http.ResponseWriter, r *http.Request) 
 	rewards := make([]map[string]any, 0, len(page.Items))
 	for _, o := range page.Items {
 		rewards = append(rewards, map[string]any{
-			"id":        o.ID,
-			"amount":    decStr(o.Amount),
-			"address":   o.Address,
-			"createdAt": o.CreatedAt.Format("2006-01-02 15:04:05"),
-			"status":    o.Status,
-			"one":       o.TitleSnapshot,
-			"two":       "",
-			"three":     "",
-			"four":      "",
+			"id":           o.ID,
+			"orderNo":      o.DisplayNo(),
+			"amount":       decStr(o.Amount),
+			"address":      o.Address,
+			"createdAt":    o.CreatedAt.Format("2006-01-02 15:04:05"),
+			"status":       o.Status,
+			"one":          o.TitleSnapshot,
+			"release_days": o.ReleaseDays,
+			"two":          "",
+			"three":        "",
+			"four":         "",
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -581,6 +875,12 @@ func (s *AppService) CompatAdminUserList(w http.ResponseWriter, r *http.Request)
 		}
 		avail := decStr(u.AvailableBalance)
 		paid := decStr(u.PaidAmount)
+		unlock := biz.ComputeLockUnlock(&u.User, false)
+		if s.settle != nil {
+			if preview, err := s.settle.PreviewUserLockUnlock(r.Context(), &u.User); err == nil {
+				unlock = preview
+			}
+		}
 		out = append(out, map[string]any{
 			"userId":             strconv.FormatUint(u.ID, 10),
 			"createdAt":          u.CreatedAt.Format("2006-01-02 15:04:05"),
@@ -588,7 +888,8 @@ func (s *AppService) CompatAdminUserList(w http.ResponseWriter, r *http.Request)
 			"amountUsdtCurrent":  paid,
 			"bAmount":            zeroStr(),
 			"amountUsdtGet":      avail,
-			"amountUsdtTwo":      zeroStr(),
+			"amountUsdtTwo":      decStr(u.RechargeBalance),
+			"rechargeBalance":    decStr(u.RechargeBalance),
 			"balanceUsdt":        avail,
 			"balanceDhb":         zeroStr(),
 			"bAmountTwo":         zeroStr(),
@@ -603,9 +904,17 @@ func (s *AppService) CompatAdminUserList(w http.ResponseWriter, r *http.Request)
 			"historyRecommend":   "0",
 			"lock":               lock,
 			"lockReward":         "0",
+			"lockBalance":        decStr(u.LockBalance),
+			"lockIspay":          decStr(u.LockIspay),
+			"activated":          u.IsActivated(),
 			"myRecommendAddress": u.InviterAddress,
 			"capEffective":       decStr(u.CapEffective),
+			"unlockToday":        decStr(unlock.UnlockTodayUSDT),
+			"unlockTodayIspay":   decStr(unlock.UnlockTodayIspay),
+			"todayLockReleased":  unlock.TodayReleased,
 			"frozen":             decStr(u.FrozenBalance),
+			"frozenIspay":        decStr(u.FrozenIspay),
+			"ispay":              decStr(u.IspayBalance),
 			"paidAmount":         paid,
 		})
 	}
@@ -649,6 +958,352 @@ func (s *AppService) CompatAdminUnlockUser(w http.ResponseWriter, r *http.Reques
 func (s *AppService) CompatAdminSubMoney(w http.ResponseWriter, r *http.Request) {
 	_ = r
 	writeBizError(w, biz.ErrUnsupportedOperation)
+}
+
+func (s *AppService) CompatAdminAddMoneyTwo(w http.ResponseWriter, r *http.Request) {
+	s.writeAdminAdjust(w, r, biz.AdjustAvailable)
+}
+
+func (s *AppService) CompatAdminSetIspay(w http.ResponseWriter, r *http.Request) {
+	s.writeAdminAdjust(w, r, biz.AdjustIspay)
+}
+
+func (s *AppService) CompatAdminAddLock(w http.ResponseWriter, r *http.Request) {
+	s.writeAdminAdjust(w, r, biz.AdjustLock)
+}
+
+func (s *AppService) CompatAdminAddLockIspay(w http.ResponseWriter, r *http.Request) {
+	s.writeAdminAdjust(w, r, biz.AdjustLockIspay)
+}
+
+func (s *AppService) CompatAdminAdjustBalance(w http.ResponseWriter, r *http.Request) {
+	address, kind, amount, err := readAdjustParams(r, true)
+	if err != nil {
+		writeBizError(w, biz.ErrInvalidAmount)
+		return
+	}
+	s.applyAdminAdjust(w, r, address, kind, amount)
+}
+
+func (s *AppService) writeAdminAdjust(w http.ResponseWriter, r *http.Request, kind string) {
+	address, _, amount, err := readAdjustParams(r, false)
+	if err != nil {
+		writeBizError(w, biz.ErrInvalidAmount)
+		return
+	}
+	s.applyAdminAdjust(w, r, address, kind, amount)
+}
+
+func (s *AppService) applyAdminAdjust(w http.ResponseWriter, r *http.Request, address, kind, amount string) {
+	delta, err := parseAmount(amount)
+	if err != nil {
+		writeBizError(w, biz.ErrInvalidAmount)
+		return
+	}
+	u, err := s.adjust.Adjust(r.Context(), address, kind, delta)
+	if err != nil {
+		writeBizError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":          "ok",
+		"address":         u.Address,
+		"kind":            kind,
+		"delta":           decStr(delta),
+		"available":       decStr(u.AvailableBalance),
+		"lock":            decStr(u.LockBalance),
+		"lockBalance":     decStr(u.LockBalance),
+		"ispay":           decStr(u.IspayBalance),
+		"lockIspay":       decStr(u.LockIspay),
+		"recharge":        decStr(u.RechargeBalance),
+		"rechargeBalance": decStr(u.RechargeBalance),
+	})
+}
+
+func (s *AppService) CompatAdminAddMoneyThree(w http.ResponseWriter, r *http.Request) {
+	s.writeAdminAdjust(w, r, biz.AdjustRecharge)
+}
+
+func (s *AppService) CompatAdminRecordList(w http.ResponseWriter, r *http.Request) {
+	page, err := s.deposit.ListAdmin(r.Context(), strings.TrimSpace(r.URL.Query().Get("address")), parsePage(r))
+	if err != nil {
+		writeBizError(w, err)
+		return
+	}
+	locations := make([]map[string]any, 0, len(page.Items))
+	for _, d := range page.Items {
+		locations = append(locations, depositJSON(d))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"locations": locations,
+		"count":     strconv.Itoa(page.Total),
+	})
+}
+
+func (s *AppService) CompatAdminPackageList(w http.ResponseWriter, r *http.Request) {
+	pkgs, err := s.orders.ListAllPackages(r.Context())
+	if err != nil {
+		writeBizError(w, err)
+		return
+	}
+	goods := make([]map[string]any, 0, len(pkgs))
+	for _, p := range pkgs {
+		goods = append(goods, packageJSON(p))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "ok",
+		"goods":  goods,
+		"items":  goods,
+		"count":  strconv.Itoa(len(goods)),
+	})
+}
+
+func writePackageBiz(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, biz.ErrPackageNotFound):
+		writeJSON(w, http.StatusOK, map[string]string{"status": "套餐不存在"})
+	case errors.Is(err, biz.ErrPackageAmountTaken):
+		writeJSON(w, http.StatusOK, map[string]string{"status": "金额已存在"})
+	case errors.Is(err, biz.ErrPackageTitle):
+		writeJSON(w, http.StatusOK, map[string]string{"status": "请填写名称"})
+	case errors.Is(err, biz.ErrPackageInUse):
+		writeJSON(w, http.StatusOK, map[string]string{"status": "已有订单不能删除，请先下架"})
+	case errors.Is(err, biz.ErrInvalidAmount):
+		writeJSON(w, http.StatusOK, map[string]string{"status": "金额错误"})
+	case errors.Is(err, biz.ErrInvalidReleaseDays):
+		writeJSON(w, http.StatusOK, map[string]string{"status": "请选择释放天数"})
+	default:
+		writeJSON(w, http.StatusOK, map[string]string{"status": "fail"})
+	}
+}
+
+func (s *AppService) CompatAdminPackageCreate(w http.ResponseWriter, r *http.Request) {
+	in, err := readAdminPackage(r)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "金额错误"})
+		return
+	}
+	p, err := s.orders.CreatePackage(r.Context(), &in.Package)
+	if err != nil {
+		writePackageBiz(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "item": packageJSON(p)})
+}
+
+func (s *AppService) CompatAdminPackageUpdate(w http.ResponseWriter, r *http.Request) {
+	in, err := readAdminPackage(r)
+	if err != nil || in.ID == 0 {
+		writeBizError(w, biz.ErrInvalidAmount)
+		return
+	}
+	cur, err := s.orders.GetPackage(r.Context(), in.ID)
+	if err != nil {
+		writePackageBiz(w, err)
+		return
+	}
+	if strings.TrimSpace(in.Title) == "" {
+		in.Title = cur.Title
+	}
+	if strings.TrimSpace(in.GoodsDesc) == "" {
+		in.GoodsDesc = cur.GoodsDesc
+	}
+	if !in.Amount.IsPositive() {
+		in.Amount = cur.Amount
+	}
+	if in.ReleaseDays == 0 {
+		in.ReleaseDays = cur.ReleaseDays
+	}
+	if !in.hasDailyCap {
+		in.DailyCap = cur.DailyCap
+	}
+	if !in.hasSort {
+		in.SortOrder = cur.SortOrder
+	}
+	if !in.hasEnabled {
+		in.Enabled = cur.Enabled
+	}
+	p, err := s.orders.SavePackage(r.Context(), &in.Package)
+	if err != nil {
+		writePackageBiz(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "item": packageJSON(p)})
+}
+
+func (s *AppService) CompatAdminPackageDelete(w http.ResponseWriter, r *http.Request) {
+	in, err := readAdminPackage(r)
+	if err != nil || in.ID == 0 {
+		writeBizError(w, biz.ErrInvalidAmount)
+		return
+	}
+	if err := s.orders.DeletePackage(r.Context(), in.ID); err != nil {
+		writePackageBiz(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+}
+
+type adminPackageIn struct {
+	biz.Package
+	hasDailyCap bool
+	hasSort     bool
+	hasEnabled  bool
+}
+
+func readAdminPackage(r *http.Request) (*adminPackageIn, error) {
+	in := &adminPackageIn{}
+	in.Enabled = true
+	if strings.Contains(r.Header.Get("Content-Type"), "json") {
+		var body struct {
+			ID      json.RawMessage `json:"id"`
+			Amount  json.RawMessage `json:"amount"`
+			Days    json.RawMessage `json:"days"`
+			Rel     json.RawMessage `json:"release_days"`
+			Title   string          `json:"title"`
+			Name    string          `json:"name"`
+			Goods   string          `json:"goods"`
+			One     string          `json:"one"`
+			Desc    string          `json:"goods_desc"`
+			Cap     json.RawMessage `json:"daily_cap"`
+			Cap2    json.RawMessage `json:"dailyCap"`
+			Sort    json.RawMessage `json:"sort_order"`
+			Sort2   json.RawMessage `json:"sortOrder"`
+			Enabled json.RawMessage `json:"enabled"`
+			Status  json.RawMessage `json:"status"`
+		}
+		if err := decodeJSON(r, &body); err != nil {
+			return nil, err
+		}
+		in.ID, _ = strconv.ParseUint(strings.Trim(string(body.ID), `"`), 10, 64)
+		in.Title = firstNonEmpty(body.Title, body.Name)
+		in.GoodsDesc = firstNonEmpty(body.Goods, body.One, body.Desc)
+		if amt := strings.Trim(string(body.Amount), `"`); amt != "" && amt != "null" {
+			d, err := parseAmount(amt)
+			if err != nil {
+				return nil, err
+			}
+			in.Amount = d
+		}
+		if days := firstNonEmpty(strings.Trim(string(body.Rel), `"`), strings.Trim(string(body.Days), `"`)); days != "" && days != "null" {
+			n, err := parseReleaseDays(days)
+			if err != nil {
+				in.ReleaseDays = 0
+			} else {
+				in.ReleaseDays = n
+			}
+		}
+		if cap := firstNonEmpty(strings.Trim(string(body.Cap), `"`), strings.Trim(string(body.Cap2), `"`)); cap != "" && cap != "null" {
+			d, err := parseAmount(cap)
+			if err != nil {
+				return nil, err
+			}
+			in.DailyCap = d
+			in.hasDailyCap = true
+		}
+		if sortRaw := firstNonEmpty(strings.Trim(string(body.Sort), `"`), strings.Trim(string(body.Sort2), `"`)); sortRaw != "" && sortRaw != "null" {
+			n, _ := strconv.Atoi(sortRaw)
+			in.SortOrder = n
+			in.hasSort = true
+		}
+		if en := firstNonEmpty(strings.Trim(string(body.Enabled), `"`), strings.Trim(string(body.Status), `"`)); en != "" && en != "null" {
+			in.Enabled = isTruthyFlag(en)
+			in.hasEnabled = true
+		}
+		return in, nil
+	}
+	if err := r.ParseForm(); err != nil {
+		return nil, err
+	}
+	in.ID, _ = strconv.ParseUint(r.Form.Get("id"), 10, 64)
+	in.Title = firstNonEmpty(r.Form.Get("title"), r.Form.Get("name"))
+	in.GoodsDesc = firstNonEmpty(r.Form.Get("goods"), r.Form.Get("one"), r.Form.Get("goods_desc"))
+	if amt := r.Form.Get("amount"); amt != "" {
+		d, err := parseAmount(amt)
+		if err != nil {
+			return nil, err
+		}
+		in.Amount = d
+	}
+	if days := firstNonEmpty(r.Form.Get("release_days"), r.Form.Get("days")); days != "" {
+		if n, err := parseReleaseDays(days); err == nil {
+			in.ReleaseDays = n
+		}
+	}
+	if cap := firstNonEmpty(r.Form.Get("daily_cap"), r.Form.Get("dailyCap")); cap != "" {
+		d, err := parseAmount(cap)
+		if err != nil {
+			return nil, err
+		}
+		in.DailyCap = d
+		in.hasDailyCap = true
+	}
+	if sortRaw := firstNonEmpty(r.Form.Get("sort_order"), r.Form.Get("sortOrder")); sortRaw != "" {
+		n, _ := strconv.Atoi(sortRaw)
+		in.SortOrder = n
+		in.hasSort = true
+	}
+	if en := firstNonEmpty(r.Form.Get("enabled"), r.Form.Get("status")); en != "" {
+		in.Enabled = isTruthyFlag(en)
+		in.hasEnabled = true
+	}
+	return in, nil
+}
+
+func readPackageUpdate(r *http.Request) (id uint64, amount, days string, err error) {
+	ct := r.Header.Get("Content-Type")
+	if strings.Contains(ct, "json") {
+		var body struct {
+			ID     json.RawMessage `json:"id"`
+			Amount json.RawMessage `json:"amount"`
+			Days   json.RawMessage `json:"days"`
+			Rel    json.RawMessage `json:"release_days"`
+		}
+		if err := decodeJSON(r, &body); err != nil {
+			return 0, "", "", err
+		}
+		id, _ = strconv.ParseUint(strings.Trim(string(body.ID), `"`), 10, 64)
+		amount = strings.Trim(string(body.Amount), `"`)
+		days = firstNonEmpty(strings.Trim(string(body.Rel), `"`), strings.Trim(string(body.Days), `"`))
+		return id, amount, days, nil
+	}
+	if err := r.ParseForm(); err != nil {
+		return 0, "", "", err
+	}
+	id, _ = strconv.ParseUint(r.Form.Get("id"), 10, 64)
+	return id, r.Form.Get("amount"), firstNonEmpty(r.Form.Get("release_days"), r.Form.Get("days")), nil
+}
+
+func readAdjustParams(r *http.Request, needKind bool) (address, kind, amount string, err error) {
+	ct := r.Header.Get("Content-Type")
+	if strings.Contains(ct, "json") {
+		var body struct {
+			Address json.RawMessage `json:"address"`
+			Kind    json.RawMessage `json:"kind"`
+			Amount  json.RawMessage `json:"amount"`
+			Usdt    json.RawMessage `json:"usdt"`
+		}
+		if err := decodeJSON(r, &body); err != nil {
+			return "", "", "", err
+		}
+		address = strings.Trim(string(body.Address), `"`)
+		kind = strings.Trim(string(body.Kind), `"`)
+		amount = firstNonEmpty(strings.Trim(string(body.Usdt), `"`), strings.Trim(string(body.Amount), `"`))
+		if needKind && strings.TrimSpace(kind) == "" {
+			return "", "", "", biz.ErrAdjustKind
+		}
+		return address, kind, amount, nil
+	}
+	if err := r.ParseForm(); err != nil {
+		return "", "", "", err
+	}
+	address = firstNonEmpty(r.Form.Get("address"))
+	kind = r.Form.Get("kind")
+	amount = firstNonEmpty(r.Form.Get("usdt"), r.Form.Get("amount"))
+	if needKind && strings.TrimSpace(kind) == "" {
+		return "", "", "", biz.ErrAdjustKind
+	}
+	return address, kind, amount, nil
 }
 
 func readLockParams(r *http.Request) (userID uint64, lockStr string, line bool, err error) {
@@ -707,7 +1362,8 @@ func (s *AppService) CompatWithdraw(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Amount json.RawMessage `json:"amount"`
+		Amount   json.RawMessage `json:"amount"`
+		CoinType json.RawMessage `json:"coinType"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "金额无效"})
@@ -718,12 +1374,48 @@ func (s *AppService) CompatWithdraw(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "金额无效"})
 		return
 	}
-	wd, err := s.withdraw.Create(r.Context(), uid, amount)
+	asset, err := biz.ParseWithdrawAsset(jsonScalar(body.CoinType))
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]string{"status": withdrawUserMessage(err)})
+		return
+	}
+	wd, err := s.withdraw.CreateAsset(r.Context(), uid, amount, asset)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]string{"status": withdrawUserMessage(err)})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "id": wd.ID})
+}
+
+func (s *AppService) CompatWithdrawCancel(w http.ResponseWriter, r *http.Request) {
+	uid, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
+		writeBizError(w, biz.ErrUnauthorized)
+		return
+	}
+	id, err := readOrderID(r)
+	if err != nil || id == 0 {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "金额无效"})
+		return
+	}
+	wd, err := s.withdraw.Cancel(r.Context(), uid, id)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]string{"status": withdrawUserMessage(err)})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "id": wd.ID, "withdraw_status": wd.Status})
+}
+
+func jsonScalar(raw json.RawMessage) string {
+	s := strings.TrimSpace(string(raw))
+	return strings.Trim(s, `"`)
+}
+
+func withdrawAssetJSON(asset string) string {
+	if strings.TrimSpace(asset) == "" {
+		return biz.WithdrawAssetUSDT
+	}
+	return asset
 }
 
 func withdrawUserMessage(err error) string {
@@ -732,10 +1424,26 @@ func withdrawUserMessage(err error) string {
 		return "可提余额不足"
 	case errors.Is(err, biz.ErrWithdrawBelowMin):
 		return "低于最低提现金额"
+	case errors.Is(err, biz.ErrWithdrawFeeExceeds):
+		return "手续费后到账必须大于0"
+	case errors.Is(err, biz.ErrWithdrawDailyCap):
+		return "超过每日提现上限"
+	case errors.Is(err, biz.ErrWithdrawConflict):
+		return "该提现不能取消"
+	case errors.Is(err, biz.ErrForbidden):
+		return "不能取消他人提现"
+	case errors.Is(err, biz.ErrWithdrawNotFound):
+		return "提现单不存在"
 	case errors.Is(err, biz.ErrInvalidAmount):
 		return "金额无效"
 	case errors.Is(err, biz.ErrUserDisabled):
 		return "用户已锁定"
+	case errors.Is(err, biz.ErrUserInactive):
+		return "未激活用户不能提现，请先购买订单激活"
+	case errors.Is(err, biz.ErrIspayWithdrawClosed):
+		return "暂不支持ISPAY提现"
+	case errors.Is(err, biz.ErrInvalidWithdrawAsset):
+		return "提现类型无效"
 	default:
 		return "提现失败"
 	}
@@ -757,6 +1465,10 @@ func (s *AppService) CompatWithdrawList(w http.ResponseWriter, r *http.Request) 
 		list = append(list, map[string]any{
 			"id":        it.ID,
 			"amount":    decStr(it.Amount),
+			"feeAmount": decStr(it.FeeAmount),
+			"relAmount": decStr(it.CreditedAmount),
+			"asset":     withdrawAssetJSON(it.Asset),
+			"type":      withdrawAssetJSON(it.Asset),
 			"status":    it.Status,
 			"createdAt": it.CreatedAt.Format("2006-01-02 15:04:05"),
 		})
@@ -768,10 +1480,20 @@ func (s *AppService) CompatWithdrawList(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *AppService) CompatAdminWithdrawList(w http.ResponseWriter, r *http.Request) {
+	rawAsset := strings.TrimSpace(r.URL.Query().Get("withDrawType"))
+	if rawAsset == "" {
+		rawAsset = strings.TrimSpace(r.URL.Query().Get("asset"))
+	}
+	asset, err := biz.ParseWithdrawListAsset(rawAsset)
+	if err != nil {
+		writeBizError(w, err)
+		return
+	}
 	page, err := s.withdraw.ListAdmin(
 		r.Context(),
 		strings.TrimSpace(r.URL.Query().Get("address")),
 		strings.TrimSpace(r.URL.Query().Get("status")),
+		asset,
 		parsePage(r),
 	)
 	if err != nil {
@@ -781,13 +1503,17 @@ func (s *AppService) CompatAdminWithdrawList(w http.ResponseWriter, r *http.Requ
 	out := make([]map[string]any, 0, len(page.Items))
 	for _, it := range page.Items {
 		out = append(out, map[string]any{
-			"id":        it.ID,
-			"address":   it.Address,
-			"amount":    decStr(it.Amount),
-			"relAmount": decStr(it.CreditedAmount),
-			"feeAmount": decStr(it.FeeAmount),
-			"status":    it.Status,
-			"createdAt": it.CreatedAt.Format("2006-01-02 15:04:05"),
+			"id":          it.ID,
+			"address":     it.Address,
+			"amount":      decStr(it.Amount),
+			"relAmount":   decStr(it.CreditedAmount),
+			"feeAmount":   decStr(it.FeeAmount),
+			"asset":       withdrawAssetJSON(it.Asset),
+			"type":        withdrawAssetJSON(it.Asset),
+			"status":      it.Status,
+			"txHash":      it.TxHash,
+			"payoutError": it.PayoutError,
+			"createdAt":   it.CreatedAt.Format("2006-01-02 15:04:05"),
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -808,6 +1534,51 @@ func (s *AppService) CompatAdminWithdrawPass(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "id": wd.ID, "withdraw_status": wd.Status})
+}
+
+func (s *AppService) CompatAdminWithdrawPayout(w http.ResponseWriter, r *http.Request) {
+	id, err := readOptionalPayoutID(r)
+	if err != nil {
+		writeBizError(w, biz.ErrInvalidAmount)
+		return
+	}
+	res, err := s.withdraw.RunPayout(r.Context(), id)
+	if err != nil {
+		writeBizError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":  "ok",
+		"enabled": res.Enabled,
+		"scanned": res.Scanned,
+		"sent":    res.Sent,
+		"passed":  res.Passed,
+		"failed":  res.Failed,
+		"skipped": res.Skipped,
+	})
+}
+
+func readOptionalPayoutID(r *http.Request) (uint64, error) {
+	ct := r.Header.Get("Content-Type")
+	raw := ""
+	if strings.Contains(ct, "json") {
+		var body struct {
+			ID json.RawMessage `json:"id"`
+		}
+		if err := decodeJSON(r, &body); err != nil {
+			return 0, err
+		}
+		raw = strings.Trim(string(body.ID), `"`)
+	} else if err := r.ParseForm(); err != nil {
+		return 0, err
+	} else {
+		raw = r.Form.Get("id")
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "null" {
+		return 0, nil
+	}
+	return parseUint(raw)
 }
 
 func (s *AppService) CompatAdminWithdrawReject(w http.ResponseWriter, r *http.Request) {
@@ -926,6 +1697,255 @@ func (s *AppService) CompatAdminPlacementGet(w http.ResponseWriter, r *http.Requ
 		"list":   list,
 		"count":  strconv.Itoa(total),
 	})
+}
+
+func recommendNodeJSON(n *biz.RecommendNode) map[string]any {
+	if n == nil {
+		return nil
+	}
+	item := map[string]any{
+		"user_id": n.UserID,
+		"address": n.Address,
+		"amount":  decStr(n.Amount),
+		"side":    n.Side,
+	}
+	kids := make([]map[string]any, 0, 2)
+	if n.Left != nil {
+		kids = append(kids, recommendNodeJSON(n.Left))
+	}
+	if n.Right != nil {
+		kids = append(kids, recommendNodeJSON(n.Right))
+	}
+	if len(kids) > 0 {
+		item["children"] = kids
+	}
+	return item
+}
+
+func recommendJSON(nodes []*biz.RecommendNode) []map[string]any {
+	list := make([]map[string]any, 0, len(nodes))
+	for _, n := range nodes {
+		if n == nil {
+			continue
+		}
+		list = append(list, recommendNodeJSON(n))
+	}
+	return list
+}
+
+func (s *AppService) fullDownline() bool {
+	return s.app != nil && s.app.FullDownline
+}
+
+func downlinePersonJSON(p *biz.DownlinePerson) map[string]any {
+	if p == nil {
+		return nil
+	}
+	created := ""
+	if !p.CreatedAt.IsZero() {
+		created = p.CreatedAt.Format("2006-01-02 15:04:05")
+	}
+	item := map[string]any{
+		"user_id":   p.UserID,
+		"address":   p.Address,
+		"paid":      decStr(p.Paid),
+		"createdAt": created,
+	}
+	if len(p.Children) > 0 {
+		kids := make([]map[string]any, 0, len(p.Children))
+		for _, c := range p.Children {
+			kids = append(kids, downlinePersonJSON(c))
+		}
+		item["children"] = kids
+	}
+	return item
+}
+
+func downlineSlotJSON(n *biz.RecommendNode) map[string]any {
+	if n == nil {
+		return nil
+	}
+	item := map[string]any{
+		"user_id": n.UserID,
+		"address": n.Address,
+		"amount":  decStr(n.Amount),
+		"side":    n.Side,
+	}
+	if n.Left != nil {
+		item["left"] = downlineSlotJSON(n.Left)
+	}
+	if n.Right != nil {
+		item["right"] = downlineSlotJSON(n.Right)
+	}
+	return item
+}
+
+func (s *AppService) CompatAdminDownline(w http.ResponseWriter, r *http.Request) {
+	userID, _ := parseUint(strings.TrimSpace(r.URL.Query().Get("user_id")))
+	if userID == 0 {
+		userID, _ = parseUint(strings.TrimSpace(r.URL.Query().Get("userId")))
+	}
+	address := strings.TrimSpace(r.URL.Query().Get("address"))
+	var (
+		view *biz.DownlineView
+		err  error
+	)
+	if s.fullDownline() {
+		view, err = s.place.AdminDownlineFull(r.Context(), userID, address)
+	} else {
+		view, err = s.place.AdminDownline(r.Context(), userID, address)
+	}
+	if err != nil {
+		writeBizError(w, err)
+		return
+	}
+	invites := make([]map[string]any, 0, len(view.Invites))
+	for _, it := range view.Invites {
+		invites = append(invites, downlinePersonJSON(it))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":       "ok",
+		"full":         view.Full,
+		"current":      downlinePersonJSON(view.Current),
+		"inviter":      downlinePersonJSON(view.Inviter),
+		"sponsor":      downlinePersonJSON(view.Sponsor),
+		"sponsor_side": view.SponsorSide,
+		"invites":      invites,
+		"left":         downlineSlotJSON(view.Left),
+		"right":        downlineSlotJSON(view.Right),
+	})
+}
+
+func (s *AppService) CompatRecommendList(w http.ResponseWriter, r *http.Request) {
+	uid, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
+		writeBizError(w, biz.ErrUnauthorized)
+		return
+	}
+	nodes, err := s.place.ListRecommend(r.Context(), uid, strings.TrimSpace(r.URL.Query().Get("address")))
+	if err != nil {
+		writeBizError(w, err)
+		return
+	}
+	if s.fullDownline() {
+		if err := s.place.ExpandRecommendTrees(r.Context(), nodes); err != nil {
+			writeBizError(w, err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "full": s.fullDownline(), "recommends": recommendJSON(nodes)})
+}
+
+func (s *AppService) CompatAdminMyAuthList(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"super": "1", "auth": []any{}})
+}
+
+func (s *AppService) CompatAdminAll(w http.ResponseWriter, r *http.Request) {
+	if s.stats == nil {
+		writeJSON(w, http.StatusOK, map[string]any{})
+		return
+	}
+	st, err := s.stats.Dashboard(r.Context())
+	if err != nil {
+		writeBizError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"totalUserR":    st.TotalUserR,
+		"totalUser":     st.TotalUser,
+		"todayUserR":    st.TodayUserR,
+		"todayUser":     st.TodayUser,
+		"buyTotal":      decStr(st.BuyTotal),
+		"todayBuy":      decStr(st.TodayBuy),
+		"balanceUsdt":   decStr(st.BalanceUSDT),
+		"todayOne":      decStr(st.TodayOne),
+		"todayTwo":      decStr(st.TodayTwo),
+		"todayThree":    decStr(st.TodayThree),
+		"totalReward":   decStr(st.TotalReward),
+		"todayWithdraw": decStr(st.TodayWithdraw),
+		"totalWithdraw": decStr(st.TotalWithdraw),
+		"totalIspay":    decStr(st.TotalIspay),
+	})
+}
+
+func (s *AppService) CompatAdminConfig(w http.ResponseWriter, r *http.Request) {
+	if s.configs == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"config": []any{}})
+		return
+	}
+	rows, err := s.configs.List(r.Context())
+	if err != nil {
+		writeBizError(w, err)
+		return
+	}
+	list := make([]map[string]any, 0, len(rows))
+	for _, c := range rows {
+		list = append(list, map[string]any{
+			"id":    strconv.FormatUint(c.ID, 10),
+			"key":   c.Key,
+			"name":  c.Name,
+			"value": c.Value,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"config": list})
+}
+
+func (s *AppService) CompatAdminConfigUpdate(w http.ResponseWriter, r *http.Request) {
+	id, value, err := readConfigUpdate(r)
+	if err != nil || id == 0 {
+		writeBizError(w, biz.ErrConfigInvalid)
+		return
+	}
+	if s.configs == nil {
+		writeBizError(w, biz.ErrConfigNotFound)
+		return
+	}
+	row, err := s.configs.Update(r.Context(), id, value)
+	if err != nil {
+		writeBizError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "ok",
+		"id":     strconv.FormatUint(row.ID, 10),
+		"key":    row.Key,
+		"value":  row.Value,
+	})
+}
+
+func readConfigUpdate(r *http.Request) (uint64, string, error) {
+	ct := r.Header.Get("Content-Type")
+	if strings.Contains(ct, "json") {
+		var body struct {
+			ID    json.RawMessage `json:"id"`
+			Value string          `json:"value"`
+		}
+		if err := decodeJSON(r, &body); err != nil {
+			return 0, "", err
+		}
+		id, err := parseUint(strings.Trim(string(body.ID), `"`))
+		return id, body.Value, err
+	}
+	if err := r.ParseForm(); err != nil {
+		return 0, "", err
+	}
+	id, err := parseUint(firstNonEmpty(r.Form.Get("id"), r.Form.Get("config_id")))
+	return id, r.Form.Get("value"), err
+}
+
+func (s *AppService) CompatAdminRecommendList(w http.ResponseWriter, r *http.Request) {
+	nodes, err := s.place.ListRecommendAdmin(r.Context(), strings.TrimSpace(r.URL.Query().Get("address")))
+	if err != nil {
+		writeBizError(w, err)
+		return
+	}
+	if s.fullDownline() {
+		if err := s.place.ExpandRecommendTrees(r.Context(), nodes); err != nil {
+			writeBizError(w, err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "full": s.fullDownline(), "recommends": recommendJSON(nodes)})
 }
 
 func readPlacementParams(r *http.Request) (userID, sponsorID uint64, side, userAddr, sponsorAddr string, err error) {

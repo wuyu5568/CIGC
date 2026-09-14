@@ -37,6 +37,12 @@ func (v *EthVerifier) Verify(address, message, signature string) error {
 	}
 	if n, ok := ethsign.NormalizeAddress(message); ok {
 		candidates = append(candidates, n, strings.ToLower(message), message)
+		if c := ethsign.ChecksumAddress(n); c != "" {
+			candidates = append(candidates, c)
+		}
+	}
+	if c := ethsign.ChecksumAddress(want); c != "" {
+		candidates = append(candidates, c)
 	}
 	seen := map[string]struct{}{}
 	for _, msg := range candidates {

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/cigc/app/internal/biz"
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
 
@@ -21,6 +22,7 @@ func toBizWithdraw(m *WithdrawModel) *biz.Withdraw {
 		Amount:         m.Amount,
 		FeeAmount:      m.FeeAmount,
 		CreditedAmount: m.CreditedAmount,
+		Asset:          m.Asset,
 		Status:         m.Status,
 		Remark:         m.Remark,
 		TxHash:         m.TxHash,
@@ -37,10 +39,12 @@ func (r *withdrawRepo) Create(ctx context.Context, w *biz.Withdraw) (*biz.Withdr
 		Amount:         w.Amount,
 		FeeAmount:      w.FeeAmount,
 		CreditedAmount: w.CreditedAmount,
+		Asset:          w.Asset,
 		Status:         w.Status,
 		Remark:         w.Remark,
 		TxHash:         w.TxHash,
 		PayoutError:    w.PayoutError,
+		CreatedAt:      w.CreatedAt,
 	}
 	if err := r.data.Session(ctx).Create(&m).Error; err != nil {
 		return nil, err
@@ -89,7 +93,7 @@ func (r *withdrawRepo) ListByUser(ctx context.Context, userID uint64) ([]*biz.Wi
 	return out, nil
 }
 
-func (r *withdrawRepo) ListAdmin(ctx context.Context, address, status string, page, pageSize int) ([]*biz.AdminWithdrawRow, int, error) {
+func (r *withdrawRepo) ListAdmin(ctx context.Context, address, status, asset string, page, pageSize int) ([]*biz.AdminWithdrawRow, int, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -103,6 +107,9 @@ func (r *withdrawRepo) ListAdmin(ctx context.Context, address, status string, pa
 	}
 	if status != "" {
 		base = base.Where("withdraws.status = ?", status)
+	}
+	if asset != "" {
+		base = base.Where("withdraws.asset = ?", asset)
 	}
 	var total int64
 	if err := base.Session(&gorm.Session{}).Count(&total).Error; err != nil {
@@ -129,6 +136,69 @@ func (r *withdrawRepo) ListAdmin(ctx context.Context, address, status string, pa
 	return out, int(total), nil
 }
 
+func (r *withdrawRepo) ListPayoutQueue(ctx context.Context, limit int) ([]*biz.AdminWithdrawRow, error) {
+	if limit < 1 {
+		limit = 20
+	}
+	type row struct {
+		WithdrawModel
+		Address string `gorm:"column:address"`
+	}
+	var rows []row
+	err := r.data.Session(ctx).Table("withdraws").
+		Joins("LEFT JOIN users ON users.id = withdraws.user_id").
+		Where("withdraws.status IN ? AND (withdraws.asset = ? OR withdraws.asset = '' OR withdraws.asset IS NULL)", []string{biz.WithdrawRewarded, biz.WithdrawDoing}, biz.WithdrawAssetUSDT).
+		Select("withdraws.*, users.address AS address").
+		Order("withdraws.id ASC").
+		Limit(limit).
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*biz.AdminWithdrawRow, len(rows))
+	for i := range rows {
+		w := toBizWithdraw(&rows[i].WithdrawModel)
+		out[i] = &biz.AdminWithdrawRow{Withdraw: *w, Address: rows[i].Address}
+	}
+	return out, nil
+}
+
+func (r *withdrawRepo) SumUsedToday(ctx context.Context, userID uint64, asset string, from, to time.Time) (decimal.Decimal, error) {
+	if userID == 0 {
+		return decimal.Zero, nil
+	}
+	var sum decimal.Decimal
+	q := r.data.Session(ctx).Model(&WithdrawModel{}).
+		Select("COALESCE(SUM(amount), 0)").
+		Where("user_id = ? AND created_at >= ? AND created_at < ?", userID, from, to).
+		Where("status IN ?", []string{biz.WithdrawPending, biz.WithdrawRewarded, biz.WithdrawDoing, biz.WithdrawPass})
+	if asset == biz.WithdrawAssetUSDT {
+		q = q.Where("(asset = ? OR asset = '' OR asset IS NULL)", biz.WithdrawAssetUSDT)
+	} else if asset != "" {
+		q = q.Where("asset = ?", asset)
+	}
+	if err := q.Scan(&sum).Error; err != nil {
+		return decimal.Zero, err
+	}
+	return sum, nil
+}
+
+func (r *withdrawRepo) UpdatePayoutMeta(ctx context.Context, id uint64, txHash, payoutError string) error {
+	res := r.data.Session(ctx).Model(&WithdrawModel{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"tx_hash":      txHash,
+			"payout_error": payoutError,
+		})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return biz.ErrWithdrawNotFound
+	}
+	return nil
+}
+
 type configRepo struct{ data *Data }
 
 // NewConfigRepo 业务配置仓储。
@@ -144,4 +214,51 @@ func (r *configRepo) GetValue(ctx context.Context, key string) (string, error) {
 		return "", err
 	}
 	return m.Value, nil
+}
+
+func toBizConfig(m *BusinessConfigModel) *biz.BusinessConfig {
+	return &biz.BusinessConfig{
+		ID:        m.ID,
+		Key:       m.ConfigKey,
+		Name:      m.Name,
+		Value:     m.Value,
+		SortOrder: m.SortOrder,
+	}
+}
+
+func (r *configRepo) List(ctx context.Context) ([]*biz.BusinessConfig, error) {
+	var rows []BusinessConfigModel
+	if err := r.data.Session(ctx).Order("sort_order ASC, id ASC").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]*biz.BusinessConfig, len(rows))
+	for i := range rows {
+		out[i] = toBizConfig(&rows[i])
+	}
+	return out, nil
+}
+
+func (r *configRepo) FindByID(ctx context.Context, id uint64) (*biz.BusinessConfig, error) {
+	var m BusinessConfigModel
+	err := r.data.Session(ctx).First(&m, id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return toBizConfig(&m), nil
+}
+
+func (r *configRepo) SetValue(ctx context.Context, id uint64, value string) error {
+	res := r.data.Session(ctx).Model(&BusinessConfigModel{}).
+		Where("id = ?", id).
+		Update("value", value)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return biz.ErrConfigNotFound
+	}
+	return nil
 }

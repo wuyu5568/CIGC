@@ -14,6 +14,11 @@ func Round(d decimal.Decimal) decimal.Decimal {
 	return d.Round(Scale)
 }
 
+// Display 展示用：先 Round(8)，再去掉多余尾零；整数不带小数点。
+func Display(d decimal.Decimal) string {
+	return Round(d).String()
+}
+
 // Parse parses a decimal string and rounds to Scale.
 func Parse(s string) (decimal.Decimal, error) {
 	d, err := decimal.NewFromString(strings.TrimSpace(s))

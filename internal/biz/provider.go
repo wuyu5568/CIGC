@@ -10,4 +10,8 @@ var ProviderSet = wire.NewSet(
 	NewLedgerUseCase,
 	NewWithdrawUseCase,
 	NewPlacementUseCase,
+	NewDepositUseCase,
+	NewConfigUseCase,
+	NewAdjustUseCase,
+	NewStatsUseCase,
 )

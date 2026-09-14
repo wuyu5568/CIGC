@@ -8,6 +8,7 @@ import (
 
 func TestApplyEnvOverrides_Payout(t *testing.T) {
 	t.Setenv(EnvPayoutEnabled, "1")
+	t.Setenv(EnvPayoutCron, "*/5 * * * *")
 	t.Setenv(EnvHotWalletKey, "aabb")
 	t.Setenv(EnvBscRPC, "https://example.invalid/")
 
@@ -22,6 +23,9 @@ func TestApplyEnvOverrides_Payout(t *testing.T) {
 	}
 	if bc.App.BscRPC != "https://example.invalid/" {
 		t.Fatalf("rpc: got %q", bc.App.BscRPC)
+	}
+	if bc.App.PayoutCron != "*/5 * * * *" {
+		t.Fatalf("cron: got %q", bc.App.PayoutCron)
 	}
 }
 
@@ -72,11 +76,48 @@ func TestValidateAppSafety_PayoutNeedsMax(t *testing.T) {
 	if err := ValidateAppSafety(&App{PayoutEnabled: true, PayoutMaxUSDT: 0}); err == nil {
 		t.Fatal("expected error when payout on without max")
 	}
-	if err := ValidateAppSafety(&App{PayoutEnabled: true, PayoutMaxUSDT: 1}); err != nil {
+	full := &App{
+		PayoutEnabled: true,
+		PayoutMaxUSDT: 1,
+		HotWalletKey:  "aa",
+		BscRPC:        "https://example.invalid/",
+		UsdtAddress:   "0x55d398326f99059fF775485246999027B3197955",
+	}
+	if err := ValidateAppSafety(full); err != nil {
 		t.Fatal(err)
 	}
 	if err := ValidateAppSafety(&App{PayoutEnabled: false, PayoutMaxUSDT: 0}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestValidateReceive_DefaultPercents(t *testing.T) {
+	err := ValidateReceive(&App{ReceiveAddresses: []ReceiveShare{
+		{Address: "0xdf4cbc6c9c4f084b6e75177852c6a29f206b8fe1", Percent: "89"},
+		{Address: "0x1c630cC605C96B1Bbcc1aCE704a7Ba0f259E6098", Percent: "5"},
+		{Address: "0xa1e54373034aae3c00df1b9b89b20d2df55e2cad", Percent: "5"},
+		{Address: "0xE7Da6c5D90f6a88fEEa228d5C9a0611c61F7500D", Percent: "1"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestApplyEnvOverrides_BuyContract(t *testing.T) {
+	t.Setenv(EnvBuyContract, "0xCb63733FB936c7B3f147C757D383645e55769bF3")
+	bc := &Bootstrap{}
+	applyEnvOverrides(bc)
+	if bc.App.BuyContract != "0xCb63733FB936c7B3f147C757D383645e55769bF3" {
+		t.Fatalf("buy: got %q", bc.App.BuyContract)
+	}
+}
+
+func TestApplyEnvOverrides_ReceiveAddressesJSON(t *testing.T) {
+	t.Setenv(EnvReceiveAddresses, `[{"address":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","percent":"60"},{"address":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","percent":"40"}]`)
+	bc := &Bootstrap{}
+	applyEnvOverrides(bc)
+	if len(bc.App.ReceiveAddresses) != 2 || bc.App.ReceiveAddresses[0].Percent != "60" {
+		t.Fatalf("%+v", bc.App.ReceiveAddresses)
 	}
 }
 

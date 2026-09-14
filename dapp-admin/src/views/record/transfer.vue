@@ -1,0 +1,93 @@
+<template>
+    <PageView>
+        <a-card title="列表">
+            <a-row :gutter="10" class="inputGroup">
+                <a-col :xs="12" :md="6" :lg="6" :xl="4">
+                    <a-input v-model="searchData.username" placeholder="请输入钱包地址" @keyup.enter="getListTwo"/>
+                </a-col>
+                <a-col :xs="12" :md="6" :lg="6" :xl="4">
+                    <a-input v-model="searchData.to_username" placeholder="接收方" @keyup.enter="getListTwo"/>
+                </a-col>
+                <a-col :xs="12" :md="6" :lg="6" :xl="4">
+                    <a-button-group>
+                        <a-button type="primary" :loading="loading" @click="getListTwo">确定筛选</a-button>
+                    </a-button-group>
+                </a-col>
+            </a-row>
+            <a-table
+                :loading="loading"
+                :columns="columns"
+                :dataSource="data"
+                :pagination="{total,pageSize,showSizeChanger,current}"
+                @change="changePagination"
+                bordered :scroll="{x:true}">
+            </a-table>
+        </a-card>
+    </PageView>
+</template>
+
+<script type="text/jsx">
+    import Log from '../../api/Log'
+    import listMixin from '../mixin/listMixin'
+    export default {
+        name: 'transfer',
+        mixins:[listMixin],
+        data(){
+            return{
+                columns: [
+                    {
+                        title: '用户名',
+                        dataIndex: 'username',
+                        customRender: (v) => <a>{v}</a>
+                    },
+                    {
+                        title: '数量',
+                        dataIndex: 'money',
+                    },
+                    {
+                        title: '类型',
+                        dataIndex: 'type',
+                        customRender: (v) => v === "1"?`USDT`:`TDH`
+                    },
+                    {
+                        title: '接收方',
+                        dataIndex: 'to_username',
+                    },
+                    {
+                        title: '时间',
+                        dataIndex: 'add_time',
+                        customRender: (v) => this.timeOne(v)
+                    },
+                ],
+                searchData:{
+                    username:"",
+                    to_username:""
+                },
+            }
+        },
+        methods: {
+            getList () {
+                this.loading = true
+                Log.getTransferLog({
+                    page: this.current,
+                    num: this.pageSize,
+                    ...this.searchData
+                }).then(res => {
+                    this.data = res.data.map((value, key) => {
+                        return { ...value, key }
+                    })
+                    this.loading = false
+                    this.total = parseInt(res.count)
+                })
+            },
+        }
+    }
+</script>
+
+<style scoped lang="less">
+    .inputGroup {
+        > div {
+            margin-bottom: 20px;
+        }
+    }
+</style>

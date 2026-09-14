@@ -2,6 +2,7 @@ package biz
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/cigc/app/internal/pkg/money"
@@ -16,15 +17,60 @@ const (
 	WithdrawRejected  = "rejected"
 	WithdrawCancelled = "cancelled"
 
-	ConfigMinWithdraw  = "min_withdraw_amount"
-	ConfigDirectRate   = "direct_rate"
-	ConfigMatchRate    = "match_rate"
-	defaultMinWithdraw = "10"
-	defaultDirectRate  = "0.10"
-	defaultMatchRate   = "0.10"
+	ConfigMinWithdraw         = "min_withdraw_amount"
+	ConfigWithdrawFeeRate     = "withdraw_fee_rate"
+	ConfigWithdrawDaily       = "withdraw_daily_limit"
+	ConfigWithdrawDailyIspay  = "withdraw_daily_limit_ispay"
+	ConfigDirectRate          = "direct_rate"
+	ConfigMatchRate           = "match_rate"
+	ConfigManageRate          = "manage_rate"
+	ConfigIspayPrice          = "ispay_price"
+	defaultMinWithdraw        = "10"
+	defaultWithdrawFee        = "0.10"
+	defaultWithdrawDaily      = "1000"
+	defaultWithdrawDailyIspay = "1000"
+	defaultDirectRate         = "0.10"
+	defaultMatchRate          = "0.10"
+	defaultManageRate         = "0.30"
+
+	WithdrawAssetUSDT  = "usdt"
+	WithdrawAssetIspay = "ispay"
 )
 
-// Withdraw 是内部账户提现单。P0 不打款：pending 冻结，rewarded 已审待打款。
+// ParseWithdrawAsset 把兼容字段 coinType / type 收成 usdt 或 ispay。
+func ParseWithdrawAsset(raw string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "0", "1", "usdt":
+		return WithdrawAssetUSDT, nil
+	case "2", "3", "ispay", "newispay":
+		return WithdrawAssetIspay, nil
+	default:
+		return "", ErrInvalidWithdrawAsset
+	}
+}
+
+// ParseWithdrawListAsset 管理端筛选：空为全部，USDT / RAW_NEW 对齐 dapp-admin。
+func ParseWithdrawListAsset(raw string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "all":
+		return "", nil
+	case "usdt", "1":
+		return WithdrawAssetUSDT, nil
+	case "raw_new", "2", "3", "ispay", "newispay":
+		return WithdrawAssetIspay, nil
+	default:
+		return "", ErrInvalidWithdrawAsset
+	}
+}
+
+func withdrawAssetOf(w *Withdraw) string {
+	if w == nil || strings.TrimSpace(w.Asset) == "" {
+		return WithdrawAssetUSDT
+	}
+	return w.Asset
+}
+
+// Withdraw 是内部账户提现单。USDT 审过后由热钱包打款；ISPAY 本刀只审不解款。
 type Withdraw struct {
 	ID             uint64
 	UserID         uint64
@@ -34,6 +80,7 @@ type Withdraw struct {
 	Status         string
 	Remark         string
 	TxHash         string
+	Asset          string
 	PayoutError    string
 	ReviewedAt     *time.Time
 	CreatedAt      time.Time
@@ -64,12 +111,27 @@ type WithdrawRepo interface {
 	FindByID(ctx context.Context, id uint64) (*Withdraw, error)
 	CasStatus(ctx context.Context, id uint64, from, to, remark string, reviewedAt *time.Time) error
 	ListByUser(ctx context.Context, userID uint64) ([]*Withdraw, error)
-	ListAdmin(ctx context.Context, address, status string, page, pageSize int) ([]*AdminWithdrawRow, int, error)
+	ListAdmin(ctx context.Context, address, status, asset string, page, pageSize int) ([]*AdminWithdrawRow, int, error)
+	ListPayoutQueue(ctx context.Context, limit int) ([]*AdminWithdrawRow, error)
+	UpdatePayoutMeta(ctx context.Context, id uint64, txHash, payoutError string) error
+	SumUsedToday(ctx context.Context, userID uint64, asset string, from, to time.Time) (decimal.Decimal, error)
 }
 
-// ConfigRepo 读取 business_configs。
+// BusinessConfig 是一条可管理的业务配置。
+type BusinessConfig struct {
+	ID        uint64
+	Key       string
+	Name      string
+	Value     string
+	SortOrder int
+}
+
+// ConfigRepo 读写 business_configs。
 type ConfigRepo interface {
 	GetValue(ctx context.Context, key string) (string, error)
+	List(ctx context.Context) ([]*BusinessConfig, error)
+	FindByID(ctx context.Context, id uint64) (*BusinessConfig, error)
+	SetValue(ctx context.Context, id uint64, value string) error
 }
 
 // TxRunner 把一组写操作放进同一事务；测试可用空实现。
@@ -85,7 +147,25 @@ func (NopTx) InTx(ctx context.Context, fn func(ctx context.Context) error) error
 	return fn(ctx)
 }
 
-// WithdrawUseCase 提现申请与审核（不做链上打款）。
+// ChainPayer 热钱包打 BSC USDT。
+type ChainPayer interface {
+	TransferUSDT(ctx context.Context, to string, amount decimal.Decimal) (txHash string, err error)
+	Receipt(ctx context.Context, txHash string) (ok, pending bool, err error)
+}
+
+// PayoutResult 一次批量打款摘要。
+type PayoutResult struct {
+	Enabled bool
+	Scanned int
+	Sent    int
+	Passed  int
+	Failed  int
+	Skipped int
+}
+
+const payoutBatchLimit = 20
+
+// WithdrawUseCase 提现申请、审核与 USDT 打款。
 type WithdrawUseCase struct {
 	users     UserRepo
 	balances  UserBalanceRepo
@@ -94,6 +174,10 @@ type WithdrawUseCase struct {
 	configs   ConfigRepo
 	tx        TxRunner
 	now       func() time.Time
+	loc       *time.Location
+	payer     ChainPayer
+	payoutOn  bool
+	payoutMax decimal.Decimal
 }
 
 // NewWithdrawUseCase 构造提现用例。
@@ -116,7 +200,47 @@ func NewWithdrawUseCase(
 		configs:   configs,
 		tx:        tx,
 		now:       time.Now,
+		loc:       shanghaiLoc(),
 	}
+}
+
+func shanghaiLoc() *time.Location {
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		return time.FixedZone("CST", 8*3600)
+	}
+	return loc
+}
+
+// SetTimezone 日切时区，空则上海。
+func (uc *WithdrawUseCase) SetTimezone(tz string) {
+	if uc == nil {
+		return
+	}
+	if strings.TrimSpace(tz) == "" {
+		uc.loc = shanghaiLoc()
+		return
+	}
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		uc.loc = shanghaiLoc()
+		return
+	}
+	uc.loc = loc
+}
+
+func (uc *WithdrawUseCase) location() *time.Location {
+	if uc == nil || uc.loc == nil {
+		return shanghaiLoc()
+	}
+	return uc.loc
+}
+
+func (uc *WithdrawUseCase) shanghaiDayRange(now time.Time) (time.Time, time.Time) {
+	loc := uc.location()
+	t := now.In(loc)
+	start := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, loc)
+	return start, start.Add(24 * time.Hour)
 }
 
 func (uc *WithdrawUseCase) minAmount(ctx context.Context) decimal.Decimal {
@@ -133,15 +257,151 @@ func (uc *WithdrawUseCase) minAmount(ctx context.Context) decimal.Decimal {
 	return money.Round(d)
 }
 
-// Create 从 available 扣到 frozen，写冻结流水，状态 pending。手续费本刀为 0。
+func (uc *WithdrawUseCase) usdtFeeRate(ctx context.Context) decimal.Decimal {
+	raw := defaultWithdrawFee
+	if uc.configs != nil {
+		if v, err := uc.configs.GetValue(ctx, ConfigWithdrawFeeRate); err == nil && strings.TrimSpace(v) != "" {
+			raw = v
+		}
+	}
+	d, err := decimal.NewFromString(strings.TrimSpace(raw))
+	if err != nil || d.IsNegative() || d.GreaterThan(decimal.NewFromInt(1)) {
+		d = decimal.RequireFromString(defaultWithdrawFee)
+	}
+	return money.Round(d)
+}
+
+func (uc *WithdrawUseCase) dailyLimitOf(ctx context.Context, asset string) decimal.Decimal {
+	key := ConfigWithdrawDaily
+	fallback := defaultWithdrawDaily
+	if asset == WithdrawAssetIspay {
+		key = ConfigWithdrawDailyIspay
+		fallback = defaultWithdrawDailyIspay
+	}
+	raw := fallback
+	if uc.configs != nil {
+		if v, err := uc.configs.GetValue(ctx, key); err == nil && strings.TrimSpace(v) != "" {
+			raw = v
+		}
+	}
+	d, err := decimal.NewFromString(strings.TrimSpace(raw))
+	if err != nil || d.IsNegative() {
+		d = decimal.RequireFromString(fallback)
+	}
+	return money.Round(d)
+}
+
+func withdrawCountsDaily(status string) bool {
+	switch status {
+	case WithdrawPending, WithdrawRewarded, WithdrawDoing, WithdrawPass:
+		return true
+	default:
+		return false
+	}
+}
+
+func (uc *WithdrawUseCase) usedToday(ctx context.Context, userID uint64, asset string) (decimal.Decimal, error) {
+	if uc == nil || uc.withdraws == nil || userID == 0 {
+		return decimal.Zero, nil
+	}
+	from, to := uc.shanghaiDayRange(uc.now())
+	used, err := uc.withdraws.SumUsedToday(ctx, userID, asset, from, to)
+	if err != nil {
+		return decimal.Zero, err
+	}
+	return money.Round(used), nil
+}
+
+func (uc *WithdrawUseCase) checkDailyCap(ctx context.Context, userID uint64, asset string, amount decimal.Decimal) error {
+	limit := uc.dailyLimitOf(ctx, asset)
+	if !limit.IsPositive() {
+		return nil
+	}
+	used, err := uc.usedToday(ctx, userID, asset)
+	if err != nil {
+		return err
+	}
+	if money.Round(used.Add(amount)).GreaterThan(limit) {
+		return ErrWithdrawDailyCap
+	}
+	return nil
+}
+
+func splitWithdrawFee(amount, rate decimal.Decimal) (fee, credited decimal.Decimal, err error) {
+	fee = money.Round(amount.Mul(rate))
+	credited = money.Round(amount.Sub(fee))
+	if !credited.IsPositive() {
+		return decimal.Zero, decimal.Zero, ErrWithdrawFeeExceeds
+	}
+	return fee, credited, nil
+}
+
+// WithdrawLimits 用户端最低额、费率与当日额度。
+type WithdrawLimits struct {
+	Min       decimal.Decimal
+	Rate      decimal.Decimal
+	Daily     decimal.Decimal
+	Today     decimal.Decimal
+	Remain    decimal.Decimal
+	DailyTwo  decimal.Decimal
+	TodayTwo  decimal.Decimal
+	RemainTwo decimal.Decimal
+}
+
+func remainOf(daily, today decimal.Decimal) decimal.Decimal {
+	if !daily.IsPositive() {
+		return decimal.Zero
+	}
+	out := money.Round(daily.Sub(today))
+	if out.IsNegative() {
+		return decimal.Zero
+	}
+	return out
+}
+
+// UserLimits 用户端展示的最低额、USDT 费率与当日额度；ISPAY 费率/最低额本刀为 0，日限额分开计。
+func (uc *WithdrawUseCase) UserLimits(ctx context.Context, userID uint64) WithdrawLimits {
+	out := WithdrawLimits{
+		Min:  decimal.RequireFromString(defaultMinWithdraw),
+		Rate: decimal.RequireFromString(defaultWithdrawFee),
+	}
+	if uc == nil {
+		return out
+	}
+	out.Min = uc.minAmount(ctx)
+	out.Rate = uc.usdtFeeRate(ctx)
+	out.Daily = uc.dailyLimitOf(ctx, WithdrawAssetUSDT)
+	out.DailyTwo = uc.dailyLimitOf(ctx, WithdrawAssetIspay)
+	if used, err := uc.usedToday(ctx, userID, WithdrawAssetUSDT); err == nil {
+		out.Today = used
+	}
+	if used, err := uc.usedToday(ctx, userID, WithdrawAssetIspay); err == nil {
+		out.TodayTwo = used
+	}
+	out.Remain = remainOf(out.Daily, out.Today)
+	out.RemainTwo = remainOf(out.DailyTwo, out.TodayTwo)
+	return out
+}
+
+// Create 从 available 扣到 frozen，写冻结流水，状态 pending。
 func (uc *WithdrawUseCase) Create(ctx context.Context, userID uint64, amount decimal.Decimal) (*Withdraw, error) {
+	return uc.CreateAsset(ctx, userID, amount, WithdrawAssetUSDT)
+}
+
+// CreateAsset 按币种提现。未激活一律拒绝。USDT：available→frozen；ISPAY：ispay→frozen_ispay。
+func (uc *WithdrawUseCase) CreateAsset(ctx context.Context, userID uint64, amount decimal.Decimal, asset string) (*Withdraw, error) {
+	if asset != WithdrawAssetUSDT && asset != WithdrawAssetIspay {
+		return nil, ErrInvalidWithdrawAsset
+	}
 	amount = money.Round(amount)
 	if !amount.IsPositive() {
 		return nil, ErrInvalidAmount
 	}
-	min := uc.minAmount(ctx)
-	if amount.LessThan(min) {
-		return nil, ErrWithdrawBelowMin
+	if asset == WithdrawAssetUSDT {
+		min := uc.minAmount(ctx)
+		if amount.LessThan(min) {
+			return nil, ErrWithdrawBelowMin
+		}
 	}
 	user, err := uc.users.FindByID(ctx, userID)
 	if err != nil {
@@ -150,37 +410,80 @@ func (uc *WithdrawUseCase) Create(ctx context.Context, userID uint64, amount dec
 	if user.IsDisabled() {
 		return nil, ErrUserDisabled
 	}
-	if money.Round(user.AvailableBalance).LessThan(amount) {
+	if !user.IsActivated() {
+		return nil, ErrUserInactive
+	}
+	fee := decimal.Zero
+	credited := amount
+	if asset == WithdrawAssetUSDT {
+		var errFee error
+		fee, credited, errFee = splitWithdrawFee(amount, uc.usdtFeeRate(ctx))
+		if errFee != nil {
+			return nil, errFee
+		}
+	}
+	if err := uc.checkDailyCap(ctx, userID, asset, amount); err != nil {
+		return nil, err
+	}
+	if asset == WithdrawAssetIspay {
+		if money.Round(user.IspayBalance).LessThan(amount) {
+			return nil, ErrInsufficientBalance
+		}
+	} else if money.Round(user.AvailableBalance).LessThan(amount) {
 		return nil, ErrInsufficientBalance
 	}
 
 	var created *Withdraw
 	err = uc.tx.InTx(ctx, func(ctx context.Context) error {
-		if err := uc.balances.SubAvailableBalance(ctx, userID, amount); err != nil {
-			return err
-		}
-		if err := uc.balances.AddFrozenBalance(ctx, userID, amount); err != nil {
-			return err
-		}
-		neg := amount.Neg()
-		if err := uc.ledger.Create(ctx, &LedgerEntry{
-			UserID: userID, EntryType: LedgerFreeze, Amount: neg,
-			BalanceKind: BalanceAvailable, Remark: "withdraw freeze",
-		}); err != nil {
-			return err
-		}
-		if err := uc.ledger.Create(ctx, &LedgerEntry{
-			UserID: userID, EntryType: LedgerFreeze, Amount: amount,
-			BalanceKind: BalanceFrozen, Remark: "withdraw freeze",
-		}); err != nil {
-			return err
+		if asset == WithdrawAssetIspay {
+			if err := uc.balances.SubIspayBalance(ctx, userID, amount); err != nil {
+				return err
+			}
+			if err := uc.balances.AddFrozenIspay(ctx, userID, amount); err != nil {
+				return err
+			}
+			neg := amount.Neg()
+			if err := uc.ledger.Create(ctx, &LedgerEntry{
+				UserID: userID, EntryType: LedgerFreeze, Amount: neg,
+				BalanceKind: BalanceIspay, Remark: "withdraw freeze ispay",
+			}); err != nil {
+				return err
+			}
+			if err := uc.ledger.Create(ctx, &LedgerEntry{
+				UserID: userID, EntryType: LedgerFreeze, Amount: amount,
+				BalanceKind: BalanceFrozenIspay, Remark: "withdraw freeze ispay",
+			}); err != nil {
+				return err
+			}
+		} else {
+			if err := uc.balances.SubAvailableBalance(ctx, userID, amount); err != nil {
+				return err
+			}
+			if err := uc.balances.AddFrozenBalance(ctx, userID, amount); err != nil {
+				return err
+			}
+			neg := amount.Neg()
+			if err := uc.ledger.Create(ctx, &LedgerEntry{
+				UserID: userID, EntryType: LedgerFreeze, Amount: neg,
+				BalanceKind: BalanceAvailable, Remark: "withdraw freeze",
+			}); err != nil {
+				return err
+			}
+			if err := uc.ledger.Create(ctx, &LedgerEntry{
+				UserID: userID, EntryType: LedgerFreeze, Amount: amount,
+				BalanceKind: BalanceFrozen, Remark: "withdraw freeze",
+			}); err != nil {
+				return err
+			}
 		}
 		w, err := uc.withdraws.Create(ctx, &Withdraw{
 			UserID:         userID,
 			Amount:         amount,
-			FeeAmount:      decimal.Zero,
-			CreditedAmount: amount,
+			FeeAmount:      fee,
+			CreditedAmount: credited,
+			Asset:          asset,
 			Status:         WithdrawPending,
+			CreatedAt:      uc.now(),
 		})
 		if err != nil {
 			return err
@@ -225,12 +528,12 @@ func paginateWithdraws(items []*Withdraw, page, pageSize int) []*Withdraw {
 	return items[start:end]
 }
 
-// ListAdmin 管理端分页，可筛 address、status。
-func (uc *WithdrawUseCase) ListAdmin(ctx context.Context, address, status string, page int) (*AdminWithdrawPage, error) {
+// ListAdmin 管理端分页，可筛 address、status、asset。
+func (uc *WithdrawUseCase) ListAdmin(ctx context.Context, address, status, asset string, page int) (*AdminWithdrawPage, error) {
 	if page < 1 {
 		page = 1
 	}
-	rows, total, err := uc.withdraws.ListAdmin(ctx, address, status, page, DefaultRewardPageSize)
+	rows, total, err := uc.withdraws.ListAdmin(ctx, address, status, asset, page, DefaultRewardPageSize)
 	if err != nil {
 		return nil, err
 	}
@@ -269,6 +572,46 @@ func (uc *WithdrawUseCase) Pass(ctx context.Context, id uint64) (*Withdraw, erro
 	return out, nil
 }
 
+func (uc *WithdrawUseCase) unfreezePending(ctx context.Context, w *Withdraw, remark string) error {
+	amount := money.Round(w.Amount)
+	if withdrawAssetOf(w) == WithdrawAssetIspay {
+		if err := uc.balances.SubFrozenIspay(ctx, w.UserID, amount); err != nil {
+			return err
+		}
+		if err := uc.balances.AddIspayBalance(ctx, w.UserID, amount); err != nil {
+			return err
+		}
+		neg := amount.Neg()
+		if err := uc.ledger.Create(ctx, &LedgerEntry{
+			UserID: w.UserID, EntryType: LedgerUnfreeze, Amount: neg,
+			BalanceKind: BalanceFrozenIspay, Remark: remark + " ispay",
+		}); err != nil {
+			return err
+		}
+		return uc.ledger.Create(ctx, &LedgerEntry{
+			UserID: w.UserID, EntryType: LedgerUnfreeze, Amount: amount,
+			BalanceKind: BalanceIspay, Remark: remark + " ispay",
+		})
+	}
+	if err := uc.balances.SubFrozenBalance(ctx, w.UserID, amount); err != nil {
+		return err
+	}
+	if err := uc.balances.AddAvailableBalance(ctx, w.UserID, amount); err != nil {
+		return err
+	}
+	neg := amount.Neg()
+	if err := uc.ledger.Create(ctx, &LedgerEntry{
+		UserID: w.UserID, EntryType: LedgerUnfreeze, Amount: neg,
+		BalanceKind: BalanceFrozen, Remark: remark,
+	}); err != nil {
+		return err
+	}
+	return uc.ledger.Create(ctx, &LedgerEntry{
+		UserID: w.UserID, EntryType: LedgerUnfreeze, Amount: amount,
+		BalanceKind: BalanceAvailable, Remark: remark,
+	})
+}
+
 // Reject pending → rejected，frozen 退回 available，写解冻流水。
 func (uc *WithdrawUseCase) Reject(ctx context.Context, id uint64) (*Withdraw, error) {
 	if id == 0 {
@@ -283,24 +626,7 @@ func (uc *WithdrawUseCase) Reject(ctx context.Context, id uint64) (*Withdraw, er
 		if w.Status != WithdrawPending {
 			return ErrWithdrawConflict
 		}
-		amount := money.Round(w.Amount)
-		if err := uc.balances.SubFrozenBalance(ctx, w.UserID, amount); err != nil {
-			return err
-		}
-		if err := uc.balances.AddAvailableBalance(ctx, w.UserID, amount); err != nil {
-			return err
-		}
-		neg := amount.Neg()
-		if err := uc.ledger.Create(ctx, &LedgerEntry{
-			UserID: w.UserID, EntryType: LedgerUnfreeze, Amount: neg,
-			BalanceKind: BalanceFrozen, Remark: "withdraw reject unfreeze",
-		}); err != nil {
-			return err
-		}
-		if err := uc.ledger.Create(ctx, &LedgerEntry{
-			UserID: w.UserID, EntryType: LedgerUnfreeze, Amount: amount,
-			BalanceKind: BalanceAvailable, Remark: "withdraw reject unfreeze",
-		}); err != nil {
+		if err := uc.unfreezePending(ctx, w, "withdraw reject unfreeze"); err != nil {
 			return err
 		}
 		now := uc.now()
@@ -316,4 +642,197 @@ func (uc *WithdrawUseCase) Reject(ctx context.Context, id uint64) (*Withdraw, er
 		return nil, err
 	}
 	return out, nil
+}
+
+// Cancel 用户取消本人 pending，解冻口径与拒绝相同。
+func (uc *WithdrawUseCase) Cancel(ctx context.Context, userID, id uint64) (*Withdraw, error) {
+	if userID == 0 || id == 0 {
+		return nil, ErrInvalidAmount
+	}
+	var out *Withdraw
+	err := uc.tx.InTx(ctx, func(ctx context.Context) error {
+		w, err := uc.withdraws.FindByID(ctx, id)
+		if err != nil {
+			return err
+		}
+		if w.UserID != userID {
+			return ErrForbidden
+		}
+		if w.Status != WithdrawPending {
+			return ErrWithdrawConflict
+		}
+		if err := uc.unfreezePending(ctx, w, "withdraw cancel unfreeze"); err != nil {
+			return err
+		}
+		now := uc.now()
+		if err := uc.withdraws.CasStatus(ctx, id, WithdrawPending, WithdrawCancelled, w.Remark, &now); err != nil {
+			return err
+		}
+		w.Status = WithdrawCancelled
+		w.ReviewedAt = &now
+		out = w
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// SetPayout 注入热钱包打款；payer 为空则只能扫到 disabled。
+func (uc *WithdrawUseCase) SetPayout(payer ChainPayer, enabled bool, maxUSDT decimal.Decimal) {
+	if uc == nil {
+		return
+	}
+	uc.payer = payer
+	uc.payoutOn = enabled && payer != nil && maxUSDT.IsPositive()
+	uc.payoutMax = money.Round(maxUSDT)
+}
+
+// PayoutEnabled 是否允许打款。
+func (uc *WithdrawUseCase) PayoutEnabled() bool {
+	return uc != nil && uc.payoutOn && uc.payer != nil
+}
+
+// RunPayout 扫 rewarded/doing 的 USDT 单并打款。id>0 只处理该单。
+func (uc *WithdrawUseCase) RunPayout(ctx context.Context, id uint64) (*PayoutResult, error) {
+	res := &PayoutResult{Enabled: uc.PayoutEnabled()}
+	if !res.Enabled {
+		return res, ErrPayoutDisabled
+	}
+	var rows []*AdminWithdrawRow
+	if id > 0 {
+		w, err := uc.withdraws.FindByID(ctx, id)
+		if err != nil {
+			return res, err
+		}
+		rows = []*AdminWithdrawRow{{Withdraw: *w}}
+	} else {
+		list, err := uc.withdraws.ListPayoutQueue(ctx, payoutBatchLimit)
+		if err != nil {
+			return res, err
+		}
+		rows = list
+	}
+	for _, row := range rows {
+		if row == nil {
+			continue
+		}
+		res.Scanned++
+		if err := uc.payoutOne(ctx, res, &row.Withdraw); err != nil {
+			return res, err
+		}
+	}
+	return res, nil
+}
+
+func (uc *WithdrawUseCase) payoutOne(ctx context.Context, res *PayoutResult, w *Withdraw) error {
+	if withdrawAssetOf(w) != WithdrawAssetUSDT {
+		res.Skipped++
+		_ = uc.withdraws.UpdatePayoutMeta(ctx, w.ID, w.TxHash, "本刀只打 USDT")
+		return nil
+	}
+	amt := money.Round(w.CreditedAmount)
+	if !amt.IsPositive() {
+		amt = money.Round(w.Amount)
+	}
+	if uc.payoutMax.IsPositive() && amt.GreaterThan(uc.payoutMax) {
+		res.Skipped++
+		_ = uc.withdraws.UpdatePayoutMeta(ctx, w.ID, w.TxHash, "exceeds payout max")
+		return nil
+	}
+	switch w.Status {
+	case WithdrawDoing:
+		if strings.TrimSpace(w.TxHash) != "" {
+			return uc.finishPayout(ctx, res, w)
+		}
+		now := uc.now()
+		if err := uc.withdraws.CasStatus(ctx, w.ID, WithdrawDoing, WithdrawRewarded, w.Remark, &now); err != nil {
+			return err
+		}
+		_ = uc.withdraws.UpdatePayoutMeta(ctx, w.ID, "", "reset empty doing")
+		w.Status = WithdrawRewarded
+		w.TxHash = ""
+	case WithdrawRewarded:
+	default:
+		res.Skipped++
+		return nil
+	}
+	user, err := uc.users.FindByID(ctx, w.UserID)
+	if err != nil {
+		res.Failed++
+		_ = uc.withdraws.UpdatePayoutMeta(ctx, w.ID, w.TxHash, trimPayoutErr(err))
+		return nil
+	}
+	to := strings.TrimSpace(user.Address)
+	now := uc.now()
+	if w.Status == WithdrawRewarded {
+		if err := uc.withdraws.CasStatus(ctx, w.ID, WithdrawRewarded, WithdrawDoing, w.Remark, &now); err != nil {
+			res.Failed++
+			return nil
+		}
+		w.Status = WithdrawDoing
+	}
+	hash, err := uc.payer.TransferUSDT(ctx, to, amt)
+	if err != nil {
+		res.Failed++
+		_ = uc.withdraws.CasStatus(ctx, w.ID, WithdrawDoing, WithdrawRewarded, w.Remark, &now)
+		_ = uc.withdraws.UpdatePayoutMeta(ctx, w.ID, "", trimPayoutErr(err))
+		return nil
+	}
+	res.Sent++
+	w.TxHash = strings.ToLower(strings.TrimSpace(hash))
+	_ = uc.withdraws.UpdatePayoutMeta(ctx, w.ID, w.TxHash, "")
+	return uc.finishPayout(ctx, res, w)
+}
+
+func (uc *WithdrawUseCase) finishPayout(ctx context.Context, res *PayoutResult, w *Withdraw) error {
+	ok, pending, err := uc.payer.Receipt(ctx, w.TxHash)
+	if err != nil {
+		res.Failed++
+		_ = uc.withdraws.UpdatePayoutMeta(ctx, w.ID, w.TxHash, trimPayoutErr(err))
+		return nil
+	}
+	if pending {
+		_ = uc.withdraws.UpdatePayoutMeta(ctx, w.ID, w.TxHash, "waiting receipt")
+		return nil
+	}
+	now := uc.now()
+	if !ok {
+		res.Failed++
+		_ = uc.withdraws.CasStatus(ctx, w.ID, WithdrawDoing, WithdrawRewarded, w.Remark, &now)
+		_ = uc.withdraws.UpdatePayoutMeta(ctx, w.ID, w.TxHash, "tx reverted")
+		return nil
+	}
+	amount := money.Round(w.Amount)
+	err = uc.tx.InTx(ctx, func(ctx context.Context) error {
+		if err := uc.balances.SubFrozenBalance(ctx, w.UserID, amount); err != nil {
+			return err
+		}
+		if err := uc.ledger.Create(ctx, &LedgerEntry{
+			UserID: w.UserID, EntryType: LedgerWithdraw, Amount: amount.Neg(),
+			BalanceKind: BalanceFrozen, Remark: "payout " + w.TxHash,
+		}); err != nil {
+			return err
+		}
+		return uc.withdraws.CasStatus(ctx, w.ID, WithdrawDoing, WithdrawPass, w.Remark, &now)
+	})
+	if err != nil {
+		res.Failed++
+		_ = uc.withdraws.UpdatePayoutMeta(ctx, w.ID, w.TxHash, trimPayoutErr(err))
+		return nil
+	}
+	res.Passed++
+	return nil
+}
+
+func trimPayoutErr(err error) string {
+	if err == nil {
+		return ""
+	}
+	s := err.Error()
+	if len(s) > 240 {
+		return s[:240]
+	}
+	return s
 }

@@ -28,6 +28,33 @@ func NormalizeAddress(addr string) (string, bool) {
 	return "0x" + strings.ToLower(body), true
 }
 
+// ChecksumAddress 返回 EIP-55 校验和地址；非法输入返回空串。
+func ChecksumAddress(addr string) string {
+	n, ok := NormalizeAddress(addr)
+	if !ok {
+		return ""
+	}
+	hexBody := n[2:]
+	h := sha3.NewLegacyKeccak256()
+	_, _ = h.Write([]byte(hexBody))
+	sum := h.Sum(nil)
+	out := []byte("0x")
+	for i := 0; i < 40; i++ {
+		c := hexBody[i]
+		nibble := sum[i/2]
+		if i%2 == 0 {
+			nibble >>= 4
+		} else {
+			nibble &= 0x0f
+		}
+		if nibble >= 8 && c >= 'a' && c <= 'f' {
+			c -= 'a' - 'A'
+		}
+		out = append(out, c)
+	}
+	return string(out)
+}
+
 func isHex(c rune) bool {
 	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/shopspring/decimal"
 )
 
 type memPlacements struct {
@@ -133,7 +135,7 @@ func TestPlace_DirectSlots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	uc := NewPlacementUseCase(users, newMemPlacements())
+	uc := NewPlacementUseCase(users, newMemPlacements(), nil)
 
 	if _, err := uc.Place(context.Background(), b.ID, a.ID, "L"); err != nil {
 		t.Fatal(err)
@@ -200,7 +202,7 @@ func TestPlaceByInvite_SharedChainOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	uc := NewPlacementUseCase(users, newMemPlacements())
+	uc := NewPlacementUseCase(users, newMemPlacements(), nil)
 
 	if p, err := uc.PlaceByInvite(context.Background(), a.ID); err != nil || p != nil {
 		t.Fatalf("genesis: %+v %v", p, err)
@@ -227,7 +229,7 @@ func TestPlaceByInvite_InviteeUsesSharedFirst(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	uc := NewPlacementUseCase(users, newMemPlacements())
+	uc := NewPlacementUseCase(users, newMemPlacements(), nil)
 	b := inviteAndPlace(t, users, uc, "0xb", a.ID)
 	c := inviteAndPlace(t, users, uc, "0xc", a.ID)
 	h := inviteAndPlace(t, users, uc, "0xh", b.ID)
@@ -245,7 +247,7 @@ func TestPlaceByInvite_InviteeOwnTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	uc := NewPlacementUseCase(users, newMemPlacements())
+	uc := NewPlacementUseCase(users, newMemPlacements(), nil)
 	b := inviteAndPlace(t, users, uc, "0xb", a.ID)
 	_ = inviteAndPlace(t, users, uc, "0xc", a.ID)
 	h := inviteAndPlace(t, users, uc, "0xh", b.ID)
@@ -266,7 +268,7 @@ func TestPlaceByInvite_RightTakenFirst_NextGoesUnderLeftChild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	uc := NewPlacementUseCase(users, newMemPlacements())
+	uc := NewPlacementUseCase(users, newMemPlacements(), nil)
 	b := inviteAndPlace(t, users, uc, "0xb", a.ID)
 	c := inviteAndPlace(t, users, uc, "0xc", a.ID)
 	h := inviteAndPlace(t, users, uc, "0xh", c.ID)
@@ -285,7 +287,7 @@ func TestPlaceByInvite_BothDepthFilled_GoesDeeperLeft(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	uc := NewPlacementUseCase(users, newMemPlacements())
+	uc := NewPlacementUseCase(users, newMemPlacements(), nil)
 	b := inviteAndPlace(t, users, uc, "0xb", a.ID)
 	_ = inviteAndPlace(t, users, uc, "0xc", a.ID)
 	d := inviteAndPlace(t, users, uc, "0xd", b.ID)
@@ -305,7 +307,7 @@ func TestPlaceByInvite_SkipOccupiedLeftThenRightThenDeeper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	uc := NewPlacementUseCase(users, newMemPlacements())
+	uc := NewPlacementUseCase(users, newMemPlacements(), nil)
 	b := inviteAndPlace(t, users, uc, "0xb", a.ID)
 	_ = inviteAndPlace(t, users, uc, "0xc", a.ID)
 	d := inviteAndPlace(t, users, uc, "0xd", b.ID)
@@ -326,7 +328,7 @@ func TestPlaceByInvite_ContinuesThroughInviteeChild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	uc := NewPlacementUseCase(users, newMemPlacements())
+	uc := NewPlacementUseCase(users, newMemPlacements(), nil)
 	b := inviteAndPlace(t, users, uc, "0xb", a.ID)
 	c := inviteAndPlace(t, users, uc, "0xc", a.ID)
 	d := inviteAndPlace(t, users, uc, "0xd", b.ID)
@@ -344,10 +346,186 @@ func TestPlaceByInvite_Idempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	uc := NewPlacementUseCase(users, newMemPlacements())
+	uc := NewPlacementUseCase(users, newMemPlacements(), nil)
 	b := inviteAndPlace(t, users, uc, "0xb", a.ID)
 	p1, err := uc.PlaceByInvite(context.Background(), b.ID)
 	if err != nil || p1 == nil || p1.SponsorID != a.ID {
 		t.Fatalf("%+v %v", p1, err)
+	}
+}
+
+func TestZoneVolume(t *testing.T) {
+	v := ZoneVolume(decimal.RequireFromString("400"), decimal.RequireFromString("1000"))
+	if !v.Min.Equal(decimal.RequireFromString("400")) || !v.Max.Equal(decimal.RequireFromString("1000")) || !v.Total.Equal(decimal.RequireFromString("1400")) {
+		t.Fatalf("%+v", v)
+	}
+	v = ZoneVolume(decimal.Zero, decimal.Zero)
+	if !v.Min.IsZero() || !v.Max.IsZero() || !v.Total.IsZero() {
+		t.Fatalf("%+v", v)
+	}
+}
+
+func TestListRecommend_SubtreePaidAndScope(t *testing.T) {
+	users := newMemUsers()
+	a, err := users.Create(context.Background(), &User{Address: "0xa", PaidAmount: decimal.RequireFromString("100")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := users.Create(context.Background(), &User{Address: "0xb", PaidAmount: decimal.RequireFromString("200")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := users.Create(context.Background(), &User{Address: "0xc", PaidAmount: decimal.RequireFromString("50")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := users.Create(context.Background(), &User{Address: "0xd", PaidAmount: decimal.RequireFromString("300")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outsider, err := users.Create(context.Background(), &User{Address: "0xee"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	uc := NewPlacementUseCase(users, newMemPlacements(), nil)
+	if _, err := uc.Place(context.Background(), b.ID, a.ID, SideLeft); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := uc.Place(context.Background(), c.ID, a.ID, SideRight); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := uc.Place(context.Background(), d.ID, b.ID, SideLeft); err != nil {
+		t.Fatal(err)
+	}
+
+	nodes, err := uc.ListRecommend(context.Background(), a.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 2 || nodes[0].Address != "0xb" || !nodes[0].Amount.Equal(decimal.RequireFromString("500")) {
+		t.Fatalf("A children=%+v", nodes)
+	}
+	if nodes[1].Address != "0xc" || !nodes[1].Amount.Equal(decimal.RequireFromString("50")) {
+		t.Fatalf("C amount=%s", nodes[1].Amount)
+	}
+
+	underB, err := uc.ListRecommend(context.Background(), a.ID, "0xb")
+	if err != nil || len(underB) != 1 || underB[0].Address != "0xd" || !underB[0].Amount.Equal(decimal.RequireFromString("300")) {
+		t.Fatalf("under B: %+v %v", underB, err)
+	}
+	empty, err := uc.ListRecommend(context.Background(), a.ID, outsider.Address)
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("outsider: %+v %v", empty, err)
+	}
+	admin, err := uc.ListRecommendAdmin(context.Background(), "0xb")
+	if err != nil || len(admin) != 1 || admin[0].Address != "0xd" {
+		t.Fatalf("admin: %+v %v", admin, err)
+	}
+}
+
+func TestAdminDownline_OneLevelInviteAndPlacement(t *testing.T) {
+	users := newMemUsers()
+	a, err := users.Create(context.Background(), &User{Address: "0xa", PaidAmount: decimal.RequireFromString("100")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := users.Create(context.Background(), &User{Address: "0xb", InviterID: &a.ID, PaidAmount: decimal.RequireFromString("200")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := users.Create(context.Background(), &User{Address: "0xc", InviterID: &a.ID, PaidAmount: decimal.RequireFromString("50")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := users.Create(context.Background(), &User{Address: "0xd", InviterID: &b.ID, PaidAmount: decimal.RequireFromString("300")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	uc := NewPlacementUseCase(users, newMemPlacements(), nil)
+	if _, err := uc.Place(context.Background(), b.ID, a.ID, SideLeft); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := uc.Place(context.Background(), c.ID, a.ID, SideRight); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := uc.Place(context.Background(), d.ID, b.ID, SideLeft); err != nil {
+		t.Fatal(err)
+	}
+
+	view, err := uc.AdminDownline(context.Background(), a.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Current == nil || view.Current.Address != "0xa" {
+		t.Fatalf("current %+v", view.Current)
+	}
+	if len(view.Invites) != 2 {
+		t.Fatalf("invites=%d want 2 (not whole tree)", len(view.Invites))
+	}
+	if view.Left == nil || view.Left.Address != "0xb" || view.Right == nil || view.Right.Address != "0xc" {
+		t.Fatalf("placement L=%+v R=%+v", view.Left, view.Right)
+	}
+	for _, it := range view.Invites {
+		if it.Address == "0xd" {
+			t.Fatal("must not include grandchild")
+		}
+	}
+
+	child, err := uc.AdminDownline(context.Background(), 0, "0xb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if child.Inviter == nil || child.Inviter.Address != "0xa" {
+		t.Fatalf("inviter %+v", child.Inviter)
+	}
+	if child.Sponsor == nil || child.Sponsor.Address != "0xa" || child.SponsorSide != SideLeft {
+		t.Fatalf("sponsor %+v %s", child.Sponsor, child.SponsorSide)
+	}
+	if len(child.Invites) != 1 || child.Invites[0].Address != "0xd" {
+		t.Fatalf("child invites %+v", child.Invites)
+	}
+
+	full, err := uc.AdminDownlineFull(context.Background(), a.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !full.Full {
+		t.Fatal("full flag")
+	}
+	var sawD bool
+	for _, it := range full.Invites {
+		if it.Address == "0xb" {
+			for _, g := range it.Children {
+				if g.Address == "0xd" {
+					sawD = true
+				}
+			}
+		}
+	}
+	if !sawD {
+		t.Fatalf("full invite tree missing grandchild: %+v", full.Invites)
+	}
+	if full.Left == nil || full.Left.Left == nil || full.Left.Left.Address != "0xd" {
+		t.Fatalf("full placement L.L=%+v", full.Left)
+	}
+}
+
+func TestTeamVolumeOf(t *testing.T) {
+	users := newMemUsers()
+	a, err := users.Create(context.Background(), &User{Address: "0xa"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := newMemMatch()
+	if err := m.SaveRemains(context.Background(), a.ID, decimal.RequireFromString("400"), decimal.RequireFromString("1000")); err != nil {
+		t.Fatal(err)
+	}
+	uc := NewPlacementUseCase(users, newMemPlacements(), m)
+	v, err := uc.TeamVolumeOf(context.Background(), a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.Min.Equal(decimal.RequireFromString("400")) || !v.Max.Equal(decimal.RequireFromString("1000")) || !v.Total.Equal(decimal.RequireFromString("1400")) {
+		t.Fatalf("%+v", v)
 	}
 }

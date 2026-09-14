@@ -13,7 +13,12 @@ type UserModel struct {
 	Address          string `gorm:"size:64;uniqueIndex"`
 	InviterID        *uint64
 	AvailableBalance decimal.Decimal `gorm:"type:decimal(36,8)"`
+	RechargeBalance  decimal.Decimal `gorm:"type:decimal(36,8)"`
 	FrozenBalance    decimal.Decimal `gorm:"type:decimal(36,8)"`
+	FrozenIspay      decimal.Decimal `gorm:"type:decimal(36,8)"`
+	IspayBalance     decimal.Decimal `gorm:"type:decimal(36,8)"`
+	LockBalance      decimal.Decimal `gorm:"type:decimal(36,8)"`
+	LockIspay        decimal.Decimal `gorm:"type:decimal(36,8)"`
 	PaidAmount       decimal.Decimal `gorm:"type:decimal(36,8)"`
 	CapEffective     decimal.Decimal `gorm:"type:decimal(36,8)"`
 	DisabledAt       *time.Time
@@ -73,27 +78,30 @@ type MatchOrderAppliedModel struct {
 func (MatchOrderAppliedModel) TableName() string { return "match_order_applied" }
 
 type PackageModel struct {
-	ID        uint64          `gorm:"primaryKey"`
-	Amount    decimal.Decimal `gorm:"type:decimal(36,8)"`
-	Title     string
-	GoodsDesc string          `gorm:"column:goods_desc"`
-	DailyCap  decimal.Decimal `gorm:"column:daily_cap;type:decimal(36,8)"`
-	SortOrder int             `gorm:"column:sort_order"`
-	Enabled   bool
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID          uint64          `gorm:"primaryKey"`
+	Amount      decimal.Decimal `gorm:"type:decimal(36,8)"`
+	Title       string
+	GoodsDesc   string          `gorm:"column:goods_desc"`
+	DailyCap    decimal.Decimal `gorm:"column:daily_cap;type:decimal(36,8)"`
+	ReleaseDays int             `gorm:"column:release_days"`
+	SortOrder   int             `gorm:"column:sort_order"`
+	Enabled     bool
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 func (PackageModel) TableName() string { return "packages" }
 
 type OrderModel struct {
 	ID            uint64 `gorm:"primaryKey"`
+	OrderNo       string `gorm:"column:order_no;size:32"`
 	UserID        uint64 `gorm:"index"`
 	PackageID     uint64
 	Amount        decimal.Decimal `gorm:"type:decimal(36,8)"`
 	TitleSnapshot string          `gorm:"column:title_snapshot"`
 	GoodsSnapshot string          `gorm:"column:goods_snapshot"`
 	Status        string          `gorm:"size:16;index"`
+	ReleaseDays   int             `gorm:"column:release_days"`
 	TxHash        *string         `gorm:"column:tx_hash;size:80"`
 	LogIndex      int             `gorm:"column:log_index"`
 	PaidAt        *time.Time
@@ -123,6 +131,7 @@ type WithdrawModel struct {
 	Amount         decimal.Decimal `gorm:"type:decimal(36,8)"`
 	FeeAmount      decimal.Decimal `gorm:"type:decimal(36,8)"`
 	CreditedAmount decimal.Decimal `gorm:"type:decimal(36,8)"`
+	Asset          string          `gorm:"size:16"`
 	Status         string          `gorm:"size:16;index"`
 	Remark         string          `gorm:"size:255"`
 	TxHash         string          `gorm:"column:tx_hash;size:80"`
@@ -154,9 +163,34 @@ type SettleRunModel struct {
 	DirectCount int
 	MatchCount  int
 	ManageCount int
+	StaticCount int
 	Remark      string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
 
 func (SettleRunModel) TableName() string { return "settle_runs" }
+
+type ChainScanCursorModel struct {
+	Name        string `gorm:"primaryKey;size:64"`
+	BlockNumber uint64
+	UpdatedAt   time.Time
+}
+
+func (ChainScanCursorModel) TableName() string { return "chain_scan_cursors" }
+
+type ChainDepositModel struct {
+	ID          uint64 `gorm:"primaryKey"`
+	TxHash      string `gorm:"size:80"`
+	LogIndex    int
+	FromAddr    string          `gorm:"column:from_addr;size:64"`
+	ToAddr      string          `gorm:"column:to_addr;size:64"`
+	Amount      decimal.Decimal `gorm:"type:decimal(36,8)"`
+	BlockNumber uint64
+	Status      string `gorm:"size:16"`
+	OrderID     *uint64
+	Remark      string `gorm:"size:255"`
+	CreatedAt   time.Time
+}
+
+func (ChainDepositModel) TableName() string { return "chain_deposits" }

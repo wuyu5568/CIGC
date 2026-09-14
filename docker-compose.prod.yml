@@ -1,0 +1,29 @@
+services:
+  mysql:
+    ports: !override []
+    mem_limit: 1536m
+
+  api:
+    build:
+      context: .
+      dockerfile: deploy/api.Dockerfile.prebuilt
+    ports: !override []
+    mem_limit: 512m
+    environment:
+      CIGC_FULL_DOWNLINE: ${CIGC_FULL_DOWNLINE:-false}
+      CIGC_ALLOW_FORCE_SETTLE: ${CIGC_ALLOW_FORCE_SETTLE:-false}
+
+  nginx:
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx/active.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${DAPP_DIST:-./deploy/nginx/placeholder/dapp}:/usr/share/nginx/html/dapp:ro
+      - ${ADMIN_DIST:-./deploy/nginx/placeholder/admin}:/usr/share/nginx/html/admin:ro
+      - certbot-www:/var/www/certbot:ro
+      - certbot-etc:/etc/letsencrypt:ro
+
+volumes:
+  certbot-www:
+  certbot-etc:

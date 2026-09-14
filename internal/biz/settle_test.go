@@ -144,8 +144,7 @@ func TestSettle_ForceDisabled(t *testing.T) {
 func TestSettle_WritesCapFromPaidAmount(t *testing.T) {
 	users := newMemUsers()
 	u, err := users.Create(context.Background(), &User{
-		Address:    "0xabc",
-		PaidAmount: decimal.RequireFromString("4000"),
+		Address: "0xabc",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -153,13 +152,15 @@ func TestSettle_WritesCapFromPaidAmount(t *testing.T) {
 	disabledAt := shanghaiNoon("2026-09-01")
 	locked, err := users.Create(context.Background(), &User{
 		Address:    "0xdef",
-		PaidAmount: decimal.RequireFromString("1000"),
 		DisabledAt: &disabledAt,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	uc := newSettleUC(users, &memPackages{rows: seedCapPackages()}, &memSettleRuns{}, true, shanghaiNoon("2026-09-11"))
+	orders := newMemOrders(users)
+	mustPay(t, orders, u.ID, "4000", "2026-09-10")
+	mustPay(t, orders, locked.ID, "1000", "2026-09-10")
+	uc := newSettleUCFull(users, &memPackages{rows: seedCapPackages()}, &memSettleRuns{}, orders, &memLedger{}, &memConfigs{min: "10"}, true, shanghaiNoon("2026-09-11"))
 	res, err := uc.Run(context.Background(), false)
 	if err != nil {
 		t.Fatal(err)
@@ -205,73 +206,67 @@ func TestSettle_SameDaySkipped(t *testing.T) {
 	}
 }
 
-func TestSettle_NewPurchaseRaisesCapNextDay(t *testing.T) {
+func TestSettle_NewPurchaseRaisesCapImmediately(t *testing.T) {
 	users := newMemUsers()
 	u, err := users.Create(context.Background(), &User{
-		Address:    "0xabc",
-		PaidAmount: decimal.RequireFromString("1000"),
+		Address: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	runs := &memSettleRuns{}
+	orders := newMemOrders(users)
+	led := &memLedger{}
 	pkgs := &memPackages{rows: seedCapPackages()}
-	day1 := shanghaiNoon("2026-09-11")
-	uc := newSettleUC(users, pkgs, runs, true, day1)
-	if _, err := uc.Run(context.Background(), false); err != nil {
-		t.Fatal(err)
-	}
-	if err := users.AddPaidAmount(context.Background(), u.ID, decimal.RequireFromString("2000")); err != nil {
-		t.Fatal(err)
-	}
-	res, err := uc.Run(context.Background(), false)
+	uc := newSettleUCFull(users, pkgs, &memSettleRuns{}, orders, led, &memConfigs{min: "10"}, true, shanghaiNoon("2026-09-11"))
+	ouc := NewOrderUseCase(pkgs, orders, users, users, led)
+	ouc.SetPaidHook(uc)
+
+	o1, err := ouc.CreateOrder(context.Background(), u.ID, decimal.RequireFromString("1000"), 300)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !res.Skipped {
-		t.Fatal("same-day should skip")
+	if _, err := ouc.MarkPaid(context.Background(), o1.ID); err != nil {
+		t.Fatal(err)
 	}
 	got, err := users.FindByID(context.Background(), u.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !got.CapEffective.Equal(decimal.RequireFromString("600")) {
-		t.Fatalf("same-day cap still 600, got %s", got.CapEffective)
+		t.Fatalf("first pay cap=%s", got.CapEffective)
 	}
 
-	uc.now = func() time.Time { return shanghaiNoon("2026-09-12") }
-	res, err = uc.Run(context.Background(), false)
+	o2, err := ouc.CreateOrder(context.Background(), u.ID, decimal.RequireFromString("3000"), 300)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Skipped || res.SettleDate != "2026-09-12" {
-		t.Fatalf("%+v", res)
+	if _, err := ouc.MarkPaid(context.Background(), o2.ID); err != nil {
+		t.Fatal(err)
 	}
 	got, err = users.FindByID(context.Background(), u.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !got.CapEffective.Equal(decimal.RequireFromString("1800")) {
-		t.Fatalf("next-day cap=%s", got.CapEffective)
+		t.Fatalf("larger pay cap=%s", got.CapEffective)
 	}
 }
 
 func TestSettle_ForceRerun(t *testing.T) {
 	users := newMemUsers()
 	u, err := users.Create(context.Background(), &User{
-		Address:    "0xabc",
-		PaidAmount: decimal.RequireFromString("1000"),
+		Address: "0xabc",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	uc := newSettleUC(users, &memPackages{rows: seedCapPackages()}, &memSettleRuns{}, true, shanghaiNoon("2026-09-11"))
+	orders := newMemOrders(users)
+	mustPay(t, orders, u.ID, "1000", "2026-09-10")
+	uc := newSettleUCFull(users, &memPackages{rows: seedCapPackages()}, &memSettleRuns{}, orders, &memLedger{}, &memConfigs{min: "10"}, true, shanghaiNoon("2026-09-11"))
 	if _, err := uc.Run(context.Background(), false); err != nil {
 		t.Fatal(err)
 	}
-	if err := users.AddPaidAmount(context.Background(), u.ID, decimal.RequireFromString("2000")); err != nil {
-		t.Fatal(err)
-	}
+	mustPay(t, orders, u.ID, "3000", "2026-09-11")
 	res, err := uc.Run(context.Background(), true)
 	if err != nil {
 		t.Fatal(err)
@@ -285,6 +280,32 @@ func TestSettle_ForceRerun(t *testing.T) {
 	}
 	if !got.CapEffective.Equal(decimal.RequireFromString("1800")) {
 		t.Fatalf("force cap=%s", got.CapEffective)
+	}
+}
+
+func TestSettle_CapUsesMaxOrderNotSum(t *testing.T) {
+	users := newMemUsers()
+	u, err := users.Create(context.Background(), &User{Address: "0xmax"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	orders := newMemOrders(users)
+	mustPay(t, orders, u.ID, "1000", "2026-09-09")
+	mustPay(t, orders, u.ID, "1000", "2026-09-10")
+	mustPay(t, orders, u.ID, "1000", "2026-09-11")
+	uc := newSettleUCFull(users, &memPackages{rows: seedCapPackages()}, &memSettleRuns{}, orders, &memLedger{}, &memConfigs{min: "10"}, true, shanghaiNoon("2026-09-11"))
+	if _, err := uc.Run(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	got, err := users.FindByID(context.Background(), u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.PaidAmount.Equal(decimal.RequireFromString("3000")) {
+		t.Fatalf("paid_amount=%s", got.PaidAmount)
+	}
+	if !got.CapEffective.Equal(decimal.RequireFromString("600")) {
+		t.Fatalf("max-order cap=%s", got.CapEffective)
 	}
 }
 
@@ -330,10 +351,16 @@ func TestSettle_PaysDirectReward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.AvailableBalance.Equal(decimal.RequireFromString("300")) {
-		t.Fatalf("inviter bal=%s", got.AvailableBalance)
+	if !got.AvailableBalance.IsZero() || !got.IspayBalance.IsZero() {
+		t.Fatalf("inactive should not credit available avail=%s ispay=%s", got.AvailableBalance, got.IspayBalance)
 	}
-	if len(led.rows) != 1 || led.rows[0].EntryType != LedgerDirect {
+	if !got.LockBalance.Equal(decimal.RequireFromString("150")) {
+		t.Fatalf("inviter lock=%s", got.LockBalance)
+	}
+	if !got.LockIspay.Equal(decimal.RequireFromString("0.075")) {
+		t.Fatalf("inviter lock ispay=%s", got.LockIspay)
+	}
+	if !ledgerHasType(led, LedgerDirect) || !ledgerHasType(led, LedgerDirectIspay) {
 		t.Fatalf("ledger=%+v", led.rows)
 	}
 
@@ -349,9 +376,21 @@ func TestSettle_PaysDirectReward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.AvailableBalance.Equal(decimal.RequireFromString("300")) {
-		t.Fatalf("after force bal=%s", got.AvailableBalance)
+	if !got.LockBalance.Equal(decimal.RequireFromString("150")) {
+		t.Fatalf("after force lock=%s", got.LockBalance)
 	}
+	if !got.LockIspay.Equal(decimal.RequireFromString("0.075")) {
+		t.Fatalf("after force lock ispay=%s", got.LockIspay)
+	}
+}
+
+func ledgerHasType(led *memLedger, typ string) bool {
+	for _, e := range led.rows {
+		if e.EntryType == typ {
+			return true
+		}
+	}
+	return false
 }
 
 type memMatch struct {
@@ -483,7 +522,7 @@ func TestSettle_PaysMatchFromPlacementTree(t *testing.T) {
 		t.Fatal(err)
 	}
 	place := newMemPlacements()
-	puc := NewPlacementUseCase(users, place)
+	puc := NewPlacementUseCase(users, place, nil)
 	if _, err := puc.Place(context.Background(), b.ID, a.ID, SideLeft); err != nil {
 		t.Fatal(err)
 	}
@@ -508,8 +547,11 @@ func TestSettle_PaysMatchFromPlacementTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.AvailableBalance.Equal(decimal.RequireFromString("40")) {
-		t.Fatalf("A bal=%s", got.AvailableBalance)
+	if !got.AvailableBalance.IsZero() {
+		t.Fatalf("inactive A avail=%s", got.AvailableBalance)
+	}
+	if !got.LockBalance.Equal(decimal.RequireFromString("20")) {
+		t.Fatalf("A lock=%s", got.LockBalance)
 	}
 	bal, err := matches.Get(context.Background(), a.ID)
 	if err != nil {
@@ -530,8 +572,8 @@ func TestSettle_PaysMatchFromPlacementTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.AvailableBalance.Equal(decimal.RequireFromString("40")) {
-		t.Fatalf("after force bal=%s", got.AvailableBalance)
+	if !got.LockBalance.Equal(decimal.RequireFromString("20")) {
+		t.Fatalf("after force lock=%s", got.LockBalance)
 	}
 	bal, err = matches.Get(context.Background(), a.ID)
 	if err != nil {
@@ -567,7 +609,7 @@ func TestSettle_MatchNestedAndCarryNextDay(t *testing.T) {
 		t.Fatal(err)
 	}
 	place := newMemPlacements()
-	puc := NewPlacementUseCase(users, place)
+	puc := NewPlacementUseCase(users, place, nil)
 	if _, err := puc.Place(context.Background(), b.ID, a.ID, SideLeft); err != nil {
 		t.Fatal(err)
 	}
@@ -578,6 +620,7 @@ func TestSettle_MatchNestedAndCarryNextDay(t *testing.T) {
 		t.Fatal(err)
 	}
 	orders := newMemOrders(users)
+	mustPay(t, orders, a.ID, "1000", "2026-09-10")
 	mustPay(t, orders, d.ID, "1000", "2026-09-11")
 
 	led := &memLedger{}
@@ -613,7 +656,7 @@ func TestSettle_MatchNestedAndCarryNextDay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.AvailableBalance.Equal(decimal.RequireFromString("40")) {
+	if !got.AvailableBalance.Equal(decimal.RequireFromString("20")) {
 		t.Fatalf("A day2 bal=%s", got.AvailableBalance)
 	}
 	aBal, _ = matches.Get(context.Background(), a.ID)
@@ -639,7 +682,7 @@ func TestSettle_MatchCapCutsPayoutKeepsPairBurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	place := newMemPlacements()
-	puc := NewPlacementUseCase(users, place)
+	puc := NewPlacementUseCase(users, place, nil)
 	if _, err := puc.Place(context.Background(), b.ID, a.ID, SideLeft); err != nil {
 		t.Fatal(err)
 	}
@@ -720,5 +763,376 @@ func TestSettle_NoDirectWithoutInviter(t *testing.T) {
 	}
 	if res.DirectCount != 0 || len(led.rows) != 0 {
 		t.Fatalf("direct=%d ledger=%d", res.DirectCount, len(led.rows))
+	}
+}
+
+func TestManageShares(t *testing.T) {
+	s := ManageShares(decimal.RequireFromString("12"))
+	if !s[0].Equal(decimal.RequireFromString("4")) || !s[1].Equal(decimal.RequireFromString("4")) || !s[2].Equal(decimal.RequireFromString("4")) {
+		t.Fatalf("%v", s)
+	}
+	s = ManageShares(decimal.RequireFromString("10"))
+	if !s[0].Add(s[1]).Add(s[2]).Equal(decimal.RequireFromString("10")) {
+		t.Fatalf("sum=%s", s[0].Add(s[1]).Add(s[2]))
+	}
+	if s[0].LessThan(s[1]) {
+		t.Fatalf("remainder should go to gen1: %v", s)
+	}
+}
+
+func setupMatchTree(t *testing.T, users *memUsers, matcher *User) (*memPlacements, *memOrders) {
+	t.Helper()
+	b, err := users.Create(context.Background(), &User{Address: matcher.Address + "l"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := users.Create(context.Background(), &User{Address: matcher.Address + "r"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	place := newMemPlacements()
+	puc := NewPlacementUseCase(users, place, nil)
+	if _, err := puc.Place(context.Background(), b.ID, matcher.ID, SideLeft); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := puc.Place(context.Background(), c.ID, matcher.ID, SideRight); err != nil {
+		t.Fatal(err)
+	}
+	orders := newMemOrders(users)
+	mustPay(t, orders, b.ID, "400", "2026-09-11")
+	mustPay(t, orders, c.ID, "1000", "2026-09-11")
+	return place, orders
+}
+
+func TestSettle_PaysManageFromMatch(t *testing.T) {
+	users := newMemUsers()
+	i3, err := users.Create(context.Background(), &User{Address: "0xi3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	i2, err := users.Create(context.Background(), &User{Address: "0xi2", InviterID: &i3.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	i1, err := users.Create(context.Background(), &User{Address: "0xi1", InviterID: &i2.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := users.SetDisabledAt(context.Background(), i1.ID, &now); err != nil {
+		t.Fatal(err)
+	}
+	u, err := users.Create(context.Background(), &User{
+		Address: "0xu", InviterID: &i1.ID, CapEffective: decimal.RequireFromString("600"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	place, orders := setupMatchTree(t, users, u)
+	mustPay(t, orders, i1.ID, "1000", "2026-09-10")
+	mustPay(t, orders, i2.ID, "1000", "2026-09-10")
+	mustPay(t, orders, i3.ID, "1000", "2026-09-10")
+	led := &memLedger{}
+	uc := newSettleUCMatch(users, &memPackages{rows: seedCapPackages()}, &memSettleRuns{}, orders, led, place, newMemMatch(), true, shanghaiNoon("2026-09-11"))
+	res, err := uc.Run(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.MatchCount != 1 || res.ManageCount != 3 {
+		t.Fatalf("match=%d manage=%d", res.MatchCount, res.ManageCount)
+	}
+	for _, id := range []uint64{i1.ID, i2.ID, i3.ID} {
+		got, err := users.FindByID(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !got.AvailableBalance.Equal(decimal.RequireFromString("2")) {
+			t.Fatalf("user %d avail=%s", id, got.AvailableBalance)
+		}
+	}
+
+	res2, err := uc.Run(context.Background(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res2.ManageCount != 0 {
+		t.Fatalf("force manage=%d", res2.ManageCount)
+	}
+	got, err := users.FindByID(context.Background(), i1.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.AvailableBalance.Equal(decimal.RequireFromString("2")) {
+		t.Fatalf("after force avail=%s", got.AvailableBalance)
+	}
+}
+
+func TestSettle_ManageSkipsMissingGen(t *testing.T) {
+	users := newMemUsers()
+	i1, err := users.Create(context.Background(), &User{Address: "0xi1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := users.Create(context.Background(), &User{
+		Address: "0xu", InviterID: &i1.ID, CapEffective: decimal.RequireFromString("600"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	place, orders := setupMatchTree(t, users, u)
+	mustPay(t, orders, i1.ID, "1000", "2026-09-10")
+	led := &memLedger{}
+	uc := newSettleUCMatch(users, &memPackages{rows: seedCapPackages()}, &memSettleRuns{}, orders, led, place, newMemMatch(), true, shanghaiNoon("2026-09-11"))
+	res, err := uc.Run(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ManageCount != 1 {
+		t.Fatalf("manage=%d", res.ManageCount)
+	}
+	got, err := users.FindByID(context.Background(), i1.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.AvailableBalance.Equal(decimal.RequireFromString("2")) {
+		t.Fatalf("should not absorb missing gens, avail=%s", got.AvailableBalance)
+	}
+}
+
+func TestSettle_PaysStaticRelease(t *testing.T) {
+	users := newMemUsers()
+	u, err := users.Create(context.Background(), &User{Address: "0xstat"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	orders := newMemOrders(users)
+	paidAt := shanghaiNoon("2026-09-11")
+	o, err := orders.Create(context.Background(), &Order{
+		UserID: u.ID, PackageID: 1, Amount: decimal.RequireFromString("12000"),
+		Status: OrderPending, ReleaseDays: 300,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := orders.MarkPaid(context.Background(), o.ID, u.ID, o.Amount, paidAt); err != nil {
+		t.Fatal(err)
+	}
+	led := &memLedger{}
+	uc := newSettleUCFull(users, &memPackages{rows: seedCapPackages()}, &memSettleRuns{}, orders, led, &memConfigs{}, true, paidAt)
+	res, err := uc.Run(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StaticCount != 1 {
+		t.Fatalf("static=%d", res.StaticCount)
+	}
+	got, err := users.FindByID(context.Background(), u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.AvailableBalance.Equal(decimal.RequireFromString("33.33333000")) {
+		t.Fatalf("usdt=%s", got.AvailableBalance)
+	}
+	if !got.IspayBalance.Equal(decimal.RequireFromString("0.01666667")) {
+		t.Fatalf("ispay=%s", got.IspayBalance)
+	}
+	res2, err := uc.Run(context.Background(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res2.SettleDate != "2026-09-12" {
+		t.Fatalf("force date=%s", res2.SettleDate)
+	}
+	if res2.StaticCount != 1 {
+		t.Fatalf("next-day static=%d", res2.StaticCount)
+	}
+	got, err = users.FindByID(context.Background(), u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.AvailableBalance.Equal(decimal.RequireFromString("66.66666000")) {
+		t.Fatalf("after next-day usdt=%s", got.AvailableBalance)
+	}
+}
+
+func TestFindActivatedRecommendAncestors_SkipsInactive(t *testing.T) {
+	users := newMemUsers()
+	a, err := users.Create(context.Background(), &User{Address: "0xa", PaidAmount: decimal.RequireFromString("1000")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := users.Create(context.Background(), &User{Address: "0xb", InviterID: &a.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := users.Create(context.Background(), &User{Address: "0xc", InviterID: &b.ID, PaidAmount: decimal.RequireFromString("1000")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := users.Create(context.Background(), &User{Address: "0xd", InviterID: &c.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := FindActivatedRecommendAncestors(context.Background(), users, d.ID, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] != c.ID || got[1] != a.ID {
+		t.Fatalf("%v", got)
+	}
+}
+
+func TestSettle_ManageSkipsInactiveWalksUp(t *testing.T) {
+	users := newMemUsers()
+	i3, err := users.Create(context.Background(), &User{Address: "0xi3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	i2, err := users.Create(context.Background(), &User{Address: "0xi2", InviterID: &i3.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	i1, err := users.Create(context.Background(), &User{Address: "0xi1", InviterID: &i2.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := users.Create(context.Background(), &User{
+		Address: "0xu", InviterID: &i1.ID, CapEffective: decimal.RequireFromString("600"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	place, orders := setupMatchTree(t, users, u)
+	mustPay(t, orders, i3.ID, "1000", "2026-09-10")
+	led := &memLedger{}
+	uc := newSettleUCMatch(users, &memPackages{rows: seedCapPackages()}, &memSettleRuns{}, orders, led, place, newMemMatch(), true, shanghaiNoon("2026-09-11"))
+	res, err := uc.Run(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ManageCount != 1 {
+		t.Fatalf("manage=%d", res.ManageCount)
+	}
+	g1, _ := users.FindByID(context.Background(), i1.ID)
+	g2, _ := users.FindByID(context.Background(), i2.ID)
+	g3, _ := users.FindByID(context.Background(), i3.ID)
+	if !g1.LockBalance.IsZero() || !g2.LockBalance.IsZero() {
+		t.Fatalf("skipped inactive i1=%s i2=%s", g1.LockBalance, g2.LockBalance)
+	}
+	if !g3.AvailableBalance.Equal(decimal.RequireFromString("2")) {
+		t.Fatalf("activated upper got %s", g3.AvailableBalance)
+	}
+}
+
+func TestOrderPaid_InstantDirectMatchManage(t *testing.T) {
+	users := newMemUsers()
+	inv, err := users.Create(context.Background(), &User{Address: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	invID := inv.ID
+	a, err := users.Create(context.Background(), &User{
+		Address: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", InviterID: &invID, CapEffective: decimal.RequireFromString("600"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := users.Create(context.Background(), &User{Address: "0xcccccccccccccccccccccccccccccccccccccccc", InviterID: &invID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := users.Create(context.Background(), &User{Address: "0xdddddddddddddddddddddddddddddddddddddddd"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	place := newMemPlacements()
+	puc := NewPlacementUseCase(users, place, nil)
+	if _, err := puc.Place(context.Background(), b.ID, a.ID, SideLeft); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := puc.Place(context.Background(), c.ID, a.ID, SideRight); err != nil {
+		t.Fatal(err)
+	}
+	orders := newMemOrders(users)
+	led := &memLedger{}
+	pkgs := &memPackages{rows: seedCapPackages()}
+	settle := newSettleUCMatch(users, pkgs, &memSettleRuns{}, orders, led, place, newMemMatch(), true, shanghaiNoon("2026-09-11"))
+	ouc := NewOrderUseCase(pkgs, orders, users, users, led)
+	ouc.SetPaidHook(settle)
+
+	ob, err := ouc.CreateOrder(context.Background(), b.ID, decimal.RequireFromString("1000"), 300)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ouc.MarkPaid(context.Background(), ob.ID); err != nil {
+		t.Fatal(err)
+	}
+	gotA, _ := users.FindByID(context.Background(), a.ID)
+	if !gotA.LockBalance.IsZero() || !gotA.AvailableBalance.IsZero() {
+		t.Fatalf("no pair yet A avail=%s lock=%s", gotA.AvailableBalance, gotA.LockBalance)
+	}
+
+	oc, err := ouc.CreateOrder(context.Background(), c.ID, decimal.RequireFromString("1000"), 300)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ouc.MarkPaid(context.Background(), oc.ID); err != nil {
+		t.Fatal(err)
+	}
+	gotA, _ = users.FindByID(context.Background(), a.ID)
+	if !gotA.LockBalance.Equal(decimal.RequireFromString("50")) {
+		t.Fatalf("instant match A lock=%s", gotA.LockBalance)
+	}
+	gotInv, _ := users.FindByID(context.Background(), inv.ID)
+	if !gotInv.LockBalance.Equal(decimal.RequireFromString("50")) {
+		t.Fatalf("instant direct inv lock=%s", gotInv.LockBalance)
+	}
+}
+
+func TestOrderStaticReleases_TodayLedgerAndPending(t *testing.T) {
+	users := newMemUsers()
+	u, err := users.Create(context.Background(), &User{Address: "0xrel"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	orders := newMemOrders(users)
+	paidAt := shanghaiNoon("2026-09-10")
+	o, err := orders.Create(context.Background(), &Order{
+		UserID: u.ID, PackageID: 1, Amount: decimal.RequireFromString("12000"),
+		Status: OrderPending, ReleaseDays: 300,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := orders.MarkPaid(context.Background(), o.ID, u.ID, o.Amount, paidAt); err != nil {
+		t.Fatal(err)
+	}
+	got, err := orders.FindByID(context.Background(), o.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	today := shanghaiNoon("2026-09-13")
+	oid := o.ID
+	led := &memLedger{rows: []*LedgerEntry{
+		{UserID: u.ID, OrderID: &oid, EntryType: LedgerStatic, Amount: decimal.RequireFromString("33.33333000"), SettleDate: &today},
+		{UserID: u.ID, OrderID: &oid, EntryType: LedgerStaticIspay, Amount: decimal.RequireFromString("0.01666667"), SettleDate: &today},
+	}}
+	uc := newSettleUCFull(users, &memPackages{}, &memSettleRuns{}, orders, led, &memConfigs{min: "10"}, false, today)
+	m, err := uc.OrderStaticReleases(context.Background(), []*Order{got})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel := m[o.ID]
+	if !rel.TodayUSDT.Equal(decimal.RequireFromString("33.33333000")) || !rel.TodayIspay.Equal(decimal.RequireFromString("0.01666667")) {
+		t.Fatalf("today usdt=%s ispay=%s", rel.TodayUSDT, rel.TodayIspay)
+	}
+	if !rel.ReleasedUSDT.Equal(decimal.RequireFromString("33.33333000")) || !rel.ReleasedIspay.Equal(decimal.RequireFromString("0.01666667")) {
+		t.Fatalf("released usdt=%s ispay=%s", rel.ReleasedUSDT, rel.ReleasedIspay)
+	}
+	if !rel.PendingUSDT.IsPositive() || !rel.PendingIspay.IsPositive() {
+		t.Fatalf("pending usdt=%s ispay=%s", rel.PendingUSDT, rel.PendingIspay)
+	}
+	if rel.SettleDate != "2026-09-13" {
+		t.Fatalf("settle_date=%s", rel.SettleDate)
 	}
 }

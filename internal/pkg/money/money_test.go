@@ -14,3 +14,15 @@ func TestRound_Zero(t *testing.T) {
 		t.Fatal("expected zero")
 	}
 }
+
+func TestDisplay_TrimZeros(t *testing.T) {
+	if got := Display(MustParse("1000")); got != "1000" {
+		t.Fatalf("int=%s", got)
+	}
+	if got := Display(MustParse("1000.50000000")); got != "1000.5" {
+		t.Fatalf("frac=%s", got)
+	}
+	if got := Display(MustParse("33.33333000")); got != "33.33333" {
+		t.Fatalf("keep=%s", got)
+	}
+}
