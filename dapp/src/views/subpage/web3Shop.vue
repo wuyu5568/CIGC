@@ -2,59 +2,70 @@
 <div class='shop-page'>
   <van-nav-bar
     :title="lang('Web3商城')"
-    :right-text="lang('收货地址')"
     left-arrow
     :border="false"
     fixed
     @click-left="handleBack"
-    @click-right="changeShippingAddress(true)"
-  />
+    @click-right="router.push('order/1')"
+  >
+    <template #right>
+      <span class="nav-order">
+        <van-icon name="orders-o" />
+        {{ lang('商城订单') }}
+      </span>
+    </template>
+  </van-nav-bar>
   <div class="page-main">
     <div class="page-title">
-      <h2>{{ lang('Web3商城') }}</h2>
-      <p>现价 {{ spot }} U / ispay · 须选 300 / 600 / 750 天</p>
+      <span class="price-label">{{ lang('现价') }}</span>
+      <span class="price-value">{{ spot }}<em>U / ispay</em></span>
     </div>
+    <ul class="days-tabs">
+      <li
+        v-for="d in dayTabs"
+        :key="d"
+        :class="{ active: Number(filterDays) === d }"
+        @click="onDaysChange(d)"
+      >{{ d }}{{ lang('天') }}</li>
+    </ul>
     <div class="shop-list">
       <div class="investment-card" v-for="item in list" :key="item.id">
-        <div class="card-main-title">{{ fmt(item.amount) }} USDT</div>
+        <div class="card-head">
+          <div class="card-cover" v-if="item.image">
+            <img :src="item.image" alt="" />
+          </div>
+          <div class="card-head-text">
+            <div class="card-main-title">{{ item.desc}}</div>
+          </div>
+        </div>
         <ul class="investment-details">
           <li>
-            <span class="detail-label">{{ lang('商品') }}：</span>
-            <span class="detail-value">{{ item.goods }}</span>
-          </li>
-          <li>
-            <span class="detail-label">{{ lang('释放天数') }}：</span>
-            <span class="detail-value">{{ item.release_days || item.days || 300 }} {{ lang('天') }}</span>
+            <span class="detail-label">{{ lang('金额') }}：</span>
+            <span class="detail-value">{{ fmt(item.amount) }} USDT</span>
           </li>
           <li>
             <span class="detail-label">{{ lang('日封顶') }}：</span>
-            <span class="detail-value">{{ fmt(item.dailyCap || item.daily_cap) }} U</span>
+            <span class="detail-value">{{ fmt(item.daily_cap) }} USDT</span>
           </li>
         </ul>
         <button class="purchase-btn" :disabled="loading" @click="openBuy(item)">{{ lang('购买') }}</button>
       </div>
-      <van-empty v-if="list.length === 0" :description="lang('暂无数据')" />
+      <van-empty v-if="!loading && list.length === 0" :description="lang('暂无数据')" />
+      <Pagination
+        v-if="pageCount > 1"
+        v-model="page"
+        :page-count="pageCount"
+        mode="simple"
+        @change="onPageChange"
+      />
     </div>
   </div>
-  <van-popup
-    v-model:show="showShippingAddress"
-    position="right"
-    :duration="0.2"
-    :style="{ width: '100%', height: '100%', background: '#171C21' }"
-  >
-    <ShippingAddressDialog :changeShippingAddress="changeShippingAddress" />
-  </van-popup>
   <a-modal forceRender :maskClosable="false" v-model:open="isOpen" :footer="null" centered destroyOnClose :title="null">
     <div class="withdraw-dialog">
       <div class="dialog-main">
         <div class="dialog-title">{{ lang('购买') }}：{{ pkgTitle }} · {{ amount }} USDT</div>
         <p class="hint">{{ lang('充值余额') }}：{{ displayAmount(userinfo.amountUsdt) }}</p>
-        <div class="dialog-label">{{ lang('释放天数') }}</div>
-        <van-radio-group v-model="days">
-          <van-radio v-for="t in tiers" :key="t.days" :name="t.days">
-            {{ t.days }} {{ lang('天') }} · {{ lang('价格') }} {{ t.price }} U
-          </van-radio>
-        </van-radio-group>
+        <p class="hint">{{ lang('释放天数') }}：{{ days }} {{ lang('天') }}</p>
         <div class="preview" v-if="days">
           <p>购币 {{ preview.coins }} · 日释放 {{ preview.dailyCoins }}</p>
           <p>每日约 {{ preview.usdt }} U + {{ preview.ispay }} ispay（现价 {{ spot }}）</p>
@@ -65,32 +76,32 @@
       </a-button>
     </div>
   </a-modal>
-  <van-action-bar>
-    <van-action-bar-button type="danger" :text="lang('商城订单')" @click="router.push('order/1')" />
-  </van-action-bar>
 </div>
 </template>
 <script setup>
 import userPerson from "@/pinia/person";
 import lang from '@/i18n/index'
 import request from "@/tools/request";
-import { showLoadingToast, closeToast, showFailToast, showSuccessToast } from "vant";
+import { Pagination, showLoadingToast, closeToast, showFailToast, showSuccessToast } from "vant";
 import { useRouter } from 'vue-router'
-import ShippingAddressDialog from "./components/shippingAddressDialog.vue";
 import { displayAmount } from '@/tools/amount'
 
+const dayTabs = [300, 600, 750]
 const defaultTiers = [
   { days: 300, price: '1200' },
   { days: 600, price: '1000' },
   { days: 750, price: '800' }
 ]
+const pageSize = 10
 
 const router = useRouter()
 let loading = $ref(false);
 const person = userPerson();
 const userinfo = $computed(() => person.userinfo);
-const showShippingAddress = $ref(false)
-const packages = $ref([])
+let filterDays = $ref(300)
+let page = $ref(1)
+let total = $ref(0)
+let list = $ref([])
 const tiers = $ref(defaultTiers)
 const price = $ref('')
 const isOpen = $ref(false)
@@ -99,7 +110,10 @@ const pkgTitle = $ref('')
 const days = $ref(null)
 
 const spot = $computed(() => price || userinfo.ispayPrice || '2000')
-const list = $computed(() => packages.length ? packages : (userinfo.goods || []))
+const pageCount = $computed(() => {
+  const n = Number(total) || 0
+  return n > 0 ? Math.ceil(n / pageSize) : 0
+})
 
 const preview = $computed(() => {
   const t = tiers.find((x) => Number(x.days) === Number(days))
@@ -121,29 +135,82 @@ const preview = $computed(() => {
 
 const fmt = (v) => displayAmount(v)
 
-request.get('app_server/package_list').then((res) => {
-  if (res && res.status === 'ok') {
-    packages = res.items || []
-    if (Array.isArray(res.release_tiers) && res.release_tiers.length) {
-      tiers = res.release_tiers
-    }
-    price = res.ispay_price || ''
+const isAllowedDays = (value) => dayTabs.includes(Number(value))
+
+const fetchList = async () => {
+  const current = Number(filterDays)
+  if (!isAllowedDays(current)) {
+    list = []
+    total = 0
+    showFailToast(lang('请选择释放天数'))
+    return
   }
-})
+  loading = true
+  await request.get('admin/web3_goods', {
+    params: {
+      days: current,
+      page,
+      page_size: pageSize
+    }
+  }).then((res) => {
+    if (res && res.status === 'ok') {
+      const rows = Array.isArray(res.list) ? res.list : []
+      list = rows.filter((item) => Number(item.days) === current)
+      total = parseInt(res.count || '0', 10) || 0
+    } else {
+      list = []
+      total = 0
+      showFailToast(res?.status || lang('请选择释放天数'))
+    }
+  }).catch(() => {
+    list = []
+    total = 0
+  }).finally(() => {
+    loading = false
+  })
+}
+
+const onDaysChange = (value) => {
+  if (!isAllowedDays(value)) {
+    showFailToast(lang('请选择释放天数'))
+    return
+  }
+  if (Number(filterDays) === Number(value)) return
+  filterDays = Number(value)
+  page = 1
+  isOpen = false
+  fetchList()
+}
+
+const onPageChange = (value) => {
+  page = value
+  fetchList()
+}
+
+fetchList()
 
 const openBuy = (item) => {
   if (!item) {
     showFailToast(lang('商品信息错误'))
     return
   }
+  const itemDays = Number(item.days)
+  if (!isAllowedDays(itemDays) || itemDays !== Number(filterDays)) {
+    showFailToast(lang('请选择释放天数'))
+    return
+  }
   amount = String(item.amount || '')
-  pkgTitle = item.title || item.goods || ''
-  days = Number(item.release_days || item.days || 300)
+  pkgTitle = item.name || item.desc || ''
+  days = itemDays
   isOpen = true
 }
 
 const handleBuy = async () => {
   if (loading || !days) return
+  if (!isAllowedDays(days) || Number(days) !== Number(filterDays)) {
+    showFailToast(lang('请选择释放天数'))
+    return
+  }
   loading = true
   showLoadingToast()
   await request.post("app_server/buy", {
@@ -167,10 +234,6 @@ const handleBuy = async () => {
   })
 }
 
-const changeShippingAddress = (value) => {
-  showShippingAddress = value
-}
-
 const handleBack = () => {
   router.back()
 }
@@ -182,57 +245,122 @@ const handleBack = () => {
     background-size: 100% auto;
     .page-main {
       width: 100%;
-      padding: 60px 15px 80px 15px;
+      padding: 60px 15px 30px 15px;
       box-sizing: border-box;
       .page-title {
-        padding: 30px 0;
-        h2 {
-          font-size: 16px;
-        }
-        p {
-          line-height: 1.6;
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        padding: 16px 0 10px;
+        .price-label {
           color: #a0a0a0;
           font-size: 13px;
-          margin-top: 8px;
+        }
+        .price-value {
+          color: #cab255;
+          font-size: 18px;
+          font-weight: 600;
+          line-height: 1;
+          em {
+            font-style: normal;
+            color: #9a9a9a;
+            font-size: 12px;
+            font-weight: 400;
+            margin-left: 6px;
+          }
+        }
+      }
+      .days-tabs {
+        display: flex;
+        gap: 6px;
+        padding: 4px;
+        margin: 8px 0 4px;
+        background: rgba(26, 26, 26, 0.88);
+        border: 1px solid #333;
+        border-radius: 12px;
+        li {
+          flex: 1;
+          height: 36px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: #9a9a9a;
+          font-size: 14px;
+          border-radius: 8px;
+          &.active {
+            background: #cab255;
+            color: #121212;
+            font-weight: 600;
+          }
         }
       }
       .shop-list {
         display: flex;
         flex-wrap: wrap;
         gap: 10px;
+        margin-top: 10px;
         .investment-card {
           width: 100%;
-          background-color: #222;
+          background-color: rgba(34, 34, 34, 0.88);
           border-radius: 12px;
           border: 1px solid #333;
           padding: 24px 15px;
           margin-bottom: 20px;
           box-sizing: border-box;
+          .card-head {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            margin-bottom: 8px;
+          }
+          .card-cover {
+            width: 72px;
+            height: 72px;
+            flex-shrink: 0;
+            border-radius: 8px;
+            overflow: hidden;
+            background: #2d2d2d;
+            img {
+              width: 100%;
+              height: 100%;
+              object-fit: cover;
+            }
+          }
+          .card-head-text {
+            flex: 1;
+            min-width: 0;
+          }
           .card-main-title {
             font-size: 18px;
             font-weight: 500;
             color: #fff;
             margin-bottom: 8px;
           }
+          .card-desc {
+            color: #a0a0a0;
+            font-size: 13px;
+            line-height: 1.5;
+          }
           .investment-details {
             list-style: none;
             margin-bottom: 10px;
             li {
               display: flex;
+              justify-content: space-between;
+              align-items: center;
               padding: 8px 0;
               border-bottom: 1px solid #2d2d2d;
               &:last-child {
                 border-bottom: none;
               }
               .detail-label {
-                width: 35%;
                 color: #a0a0a0;
                 font-size: 14px;
               }
               .detail-value {
-                width: 65%;
                 color: #e0e0e0;
                 font-size: 14px;
+                text-align: right;
               }
             }
           }
@@ -250,8 +378,15 @@ const handleBack = () => {
         }
       }
     }
-    /deep/ .van-action-bar {
-      padding: 0 30px;
+    .nav-order {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 14px;
+      color: rgb(204, 204, 204);
+      .van-icon {
+        font-size: 16px;
+      }
     }
     /deep/ .van-button {
       border-radius: 12px;
@@ -265,11 +400,6 @@ const handleBack = () => {
       width: 100%;
       font-size: 14px;
       font-weight: 500;
-    }
-    .dialog-label {
-      margin: 12px 0 8px;
-      font-size: 13px;
-      color: #666;
     }
     .dialog-main {
       width: 100%;
