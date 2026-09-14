@@ -1,16 +1,16 @@
 <template>
     <PageView>
         <a-card title="Web3商品列表">
-            <div slot="extra">
-                <a-button type="primary" @click="openCreate">新增商品</a-button>
-            </div>
             <div class="days-filter">
-                <span class="days-filter-label">释放天数：</span>
-                <a-radio-group v-model="filterDays" buttonStyle="solid" @change="onDaysChange">
-                    <a-radio-button :value="300">300天</a-radio-button>
-                    <a-radio-button :value="600">600天</a-radio-button>
-                    <a-radio-button :value="750">750天</a-radio-button>
-                </a-radio-group>
+                <div class="days-filter-left">
+                    <span class="days-filter-label">释放天数：</span>
+                    <a-radio-group v-model="filterDays" buttonStyle="solid" @change="onDaysChange">
+                        <a-radio-button :value="300">300天</a-radio-button>
+                        <a-radio-button :value="600">600天</a-radio-button>
+                        <a-radio-button :value="750">750天</a-radio-button>
+                    </a-radio-group>
+                </div>
+                <a-button type="primary" @click="openCreate">新增商品</a-button>
             </div>
             <a-table :loading="loading" :columns="columns" :dataSource="data" :pagination="{ total, pageSize, current }"
                 @change="changePagination" bordered :scroll="{ x: true }">
@@ -350,7 +350,12 @@ export default {
 .days-filter {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     margin-bottom: 16px;
+}
+.days-filter-left {
+    display: flex;
+    align-items: center;
 }
 .days-filter-label {
     margin-right: 12px;
