@@ -4,43 +4,28 @@ pragma solidity ^0.8.26;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-/// @title BuySomething — CIGC 预售收款
-/// @notice 收款地址和比例写死在合约里，对齐 configs/config.yaml：89 / 5 / 5 / 1。
 contract BuySomething is ReentrancyGuard {
-    /// @dev 业务金额 8 位小数 → USDT 18 位时的粒度 1e10。
-    uint256 private constant ROUND8_UNIT = 1e10;
-
-    address public usdt = 0x55d398326f99059fF775485246999027B3197955; // bsc-USDT
-
-    address public constant RECEIVER_89 = 0xdf4cbc6c9c4f084b6e75177852c6a29f206b8fe1;
-    address public constant RECEIVER_5A = 0x1c630cC605C96B1Bbcc1aCE704a7Ba0f259E6098;
-    address public constant RECEIVER_5B = 0xa1e54373034aae3c00df1b9b89b20d2df55e2cad;
-    address public constant RECEIVER_1 = 0xE7Da6c5D90f6a88fEEa228d5C9a0611c61F7500D;
+    address public usdt = 0x55d398326f99059fF775485246999027B3197955; // AIX-USDT
 
     address[] public users;
     uint256[] public usersAmount;
 
     constructor() {}
 
-    /// @param amount USDT 总量（18 位小数，如 1000e18），必须能整除到 8 位业务精度。
-    function buy(uint256 amount) external nonReentrant {
-        require(amount > 0, "err num");
-        require(amount % ROUND8_UNIT == 0, "precision");
+    function buy(uint256 num) external nonReentrant {
+        require(5 <= num, "err num");
 
-        uint256 share89 = _round8MulDiv100(amount, 89);
-        uint256 share5a = _round8MulDiv100(amount, 5);
-        uint256 share5b = _round8MulDiv100(amount, 5);
-        uint256 share1 = amount - share89 - share5a - share5b;
-        require(share89 > 0 && share5a > 0 && share5b > 0 && share1 > 0, "share zero");
+        uint256 amount = num * 10**18;
 
-        IERC20 token = IERC20(usdt);
-        require(token.transferFrom(msg.sender, RECEIVER_89, share89), "pay 89");
-        require(token.transferFrom(msg.sender, RECEIVER_5A, share5a), "pay 5a");
-        require(token.transferFrom(msg.sender, RECEIVER_5B, share5b), "pay 5b");
-        require(token.transferFrom(msg.sender, RECEIVER_1, share1), "pay 1");
+        IERC20(usdt).transferFrom(msg.sender, 0xa1E54373034aaE3C00Df1b9b89B20d2df55e2CAD, amount * 80 / 100);
+        IERC20(usdt).transferFrom(msg.sender, 0xE7Da6c5D90f6a88fEEa228d5C9a0611c61F7500D, amount * 10 / 100);
+        IERC20(usdt).transferFrom(msg.sender, 0x623ecc54647605C220199F4d273Cf9F43fDdD5c1, amount * 5 / 100);
+        IERC20(usdt).transferFrom(msg.sender, 0x907D9173ab226C698C178981c4D135f8168dD6eb, amount * 3 / 100);
+        IERC20(usdt).transferFrom(msg.sender, 0x279F2B0B788b50c90ceCd74C9134D152083A87B7, amount * 15 / 1000);
+        IERC20(usdt).transferFrom(msg.sender, 0xd3E7fE539c291010B8948Fe19372ac9223288109, amount - (amount * 80 / 100 + amount * 10 / 100 + amount * 5 / 100 + amount * 3 / 100 + amount * 15 / 1000));
 
         users.push(msg.sender);
-        usersAmount.push(amount);
+        usersAmount.push(num);
     }
 
     function getUserLength() public view returns (uint256) {
@@ -71,20 +56,5 @@ contract BuySomething is ReentrancyGuard {
             data[i - startIndex] = usersAmount[i];
         }
         return data;
-    }
-
-    /// @dev RoundHalfEven：Round8(amount * percent / 100)，最后一笔吃余数。
-    function _round8MulDiv100(uint256 amount, uint256 percent) private pure returns (uint256) {
-        uint256 denom = 100 * ROUND8_UNIT;
-        uint256 num = amount * percent;
-        uint256 quot = num / denom;
-        uint256 rem = num % denom;
-        uint256 half = denom / 2;
-        if (rem > half || (rem == half && (quot & 1) == 1)) {
-            unchecked {
-                quot += 1;
-            }
-        }
-        return quot * ROUND8_UNIT;
     }
 }

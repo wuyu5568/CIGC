@@ -63,6 +63,7 @@ func registerHTTPRoutes(srv *khttp.Server, cfg *conf.Bootstrap, svc *service.App
 	srv.Handle("/api/app_server/withdraw_list", stdhttp.HandlerFunc(auth.RequireJWT(jwt, svc.CompatWithdrawList)))
 	srv.Handle("/api/app_server/recommend_list", stdhttp.HandlerFunc(auth.RequireJWT(jwt, svc.CompatRecommendList)))
 	srv.Handle("/api/app_server/downline", stdhttp.HandlerFunc(auth.RequireJWT(jwt, svc.CompatUserDownline)))
+	registerAdminRoutes(srv, "/api/admin", jwt, svc)
 	registerAdminRoutes(srv, "/api/admin_cigc", jwt, svc)
 	registerAdminRoutes(srv, "/api/admin_dhb", jwt, svc)
 }
@@ -72,6 +73,7 @@ func registerAdminRoutes(srv *khttp.Server, prefix, jwt string, svc *service.App
 	srv.Handle(prefix+"/order_pay", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.CompatAdminMarkPaid)))
 	srv.Handle(prefix+"/settle", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.CompatAdminSettle)))
 	srv.Handle(prefix+"/settle_status", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.CompatAdminSettleStatus)))
+	srv.Handle(prefix+"/settle_reset", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.CompatAdminSettleReset)))
 	srv.Handle(prefix+"/deposit_scan", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.CompatAdminDepositScan)))
 	srv.Handle(prefix+"/reward_list", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.CompatAdminRewardList)))
 	srv.Handle(prefix+"/buy_list", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.CompatAdminBuyList)))
@@ -106,5 +108,11 @@ func registerAdminRoutes(srv *khttp.Server, prefix, jwt string, svc *service.App
 	srv.Handle(prefix+"/package_create", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.CompatAdminPackageCreate)))
 	srv.Handle(prefix+"/package_update", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.CompatAdminPackageUpdate)))
 	srv.Handle(prefix+"/package_delete", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.CompatAdminPackageDelete)))
+	srv.Handle(prefix+"/web3_goods", stdhttp.HandlerFunc(auth.RequireAdminOrUserGET(jwt, svc.AdminWeb3GoodsList)))
+	srv.Handle(prefix+"/web3_goods_create", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.AdminWeb3GoodsCreate)))
+	srv.Handle(prefix+"/web3_goods_update", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.AdminWeb3GoodsUpdate)))
+	srv.Handle(prefix+"/web3_goods_status", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.AdminWeb3GoodsStatus)))
+	srv.Handle(prefix+"/web3_goods_delete", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.AdminWeb3GoodsDelete)))
+	srv.Handle(prefix+"/web3_goods_image_upload", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.AdminWeb3GoodsImageUpload)))
 	srv.Handle(prefix+"/my_auth_list", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.CompatAdminMyAuthList)))
 }

@@ -15,7 +15,7 @@ func TestAdjust_AddAndSubAvailableAndLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	led := &memLedger{}
-	uc := NewAdjustUseCase(users, users, led, NopTx{})
+	uc := NewAdjustUseCase(users, users, led, NopTx{}, newMemDailyCap())
 
 	got, err := uc.Adjust(context.Background(), u.Address, AdjustAvailable, decimal.RequireFromString("10.5"))
 	if err != nil {
@@ -52,7 +52,7 @@ func TestAdjust_IspayAndLockIspay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	uc := NewAdjustUseCase(users, users, &memLedger{}, NopTx{})
+	uc := NewAdjustUseCase(users, users, &memLedger{}, NopTx{}, newMemDailyCap())
 	got, err := uc.Adjust(context.Background(), u.Address, AdjustIspay, decimal.RequireFromString("1.2"))
 	if err != nil {
 		t.Fatal(err)
@@ -82,7 +82,7 @@ func TestAdjust_RejectsZeroKindAndOverdraft(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	uc := NewAdjustUseCase(users, users, &memLedger{}, NopTx{})
+	uc := NewAdjustUseCase(users, users, &memLedger{}, NopTx{}, newMemDailyCap())
 	if _, err := uc.Adjust(context.Background(), u.Address, AdjustAvailable, decimal.Zero); !errors.Is(err, ErrInvalidAmount) {
 		t.Fatalf("zero: %v", err)
 	}
@@ -101,5 +101,35 @@ func TestAdjust_RejectsZeroKindAndOverdraft(t *testing.T) {
 	}
 	if _, err := uc.Adjust(context.Background(), "not-an-address", AdjustAvailable, decimal.RequireFromString("1")); !errors.Is(err, ErrUserNotFound) {
 		t.Fatalf("addr: %v", err)
+	}
+}
+
+func TestAdjust_SubLockReducesHold(t *testing.T) {
+	users := newMemUsers()
+	u, err := users.Create(context.Background(), &User{Address: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	daily := newMemDailyCap()
+	uc := NewAdjustUseCase(users, users, &memLedger{}, NopTx{}, daily)
+	if _, err := uc.Adjust(context.Background(), u.Address, AdjustLock, decimal.RequireFromString("3")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := uc.Adjust(context.Background(), u.Address, AdjustLock, decimal.RequireFromString("-1")); err != nil {
+		t.Fatal(err)
+	}
+	holds, err := daily.ListActiveHolds(context.Background(), u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(holds) != 1 || !holds[0].USDT.Equal(decimal.RequireFromString("2")) {
+		t.Fatalf("holds=%+v", holds)
+	}
+	got, err := users.FindByID(context.Background(), u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.LockBalance.Equal(decimal.RequireFromString("2")) {
+		t.Fatalf("lock=%s", got.LockBalance)
 	}
 }

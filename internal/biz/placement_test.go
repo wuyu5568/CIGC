@@ -365,6 +365,69 @@ func TestZoneVolume(t *testing.T) {
 	}
 }
 
+func TestPairedVolume(t *testing.T) {
+	got := PairedVolume(
+		decimal.RequireFromString("500"),
+		decimal.RequireFromString("50"),
+		decimal.RequireFromString("100"),
+		decimal.RequireFromString("50"),
+	)
+	if !got.Equal(decimal.RequireFromString("200")) {
+		t.Fatalf("paired=%s", got)
+	}
+	if !PairedVolume(decimal.RequireFromString("10"), decimal.Zero, decimal.RequireFromString("20"), decimal.Zero).IsZero() {
+		t.Fatal("negative pair should clamp to 0")
+	}
+}
+
+func TestAdminTeamStats_SubtreeAndPair(t *testing.T) {
+	users := newMemUsers()
+	a, err := users.Create(context.Background(), &User{Address: "0xa", PaidAmount: decimal.RequireFromString("100")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := users.Create(context.Background(), &User{Address: "0xb", PaidAmount: decimal.RequireFromString("200")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := users.Create(context.Background(), &User{Address: "0xc", PaidAmount: decimal.RequireFromString("50")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := users.Create(context.Background(), &User{Address: "0xd", PaidAmount: decimal.RequireFromString("300")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	matches := newMemMatch()
+	if err := matches.SaveRemains(context.Background(), a.ID, decimal.RequireFromString("100"), decimal.RequireFromString("50")); err != nil {
+		t.Fatal(err)
+	}
+	uc := NewPlacementUseCase(users, newMemPlacements(), matches)
+	if _, err := uc.Place(context.Background(), b.ID, a.ID, SideLeft); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := uc.Place(context.Background(), c.ID, a.ID, SideRight); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := uc.Place(context.Background(), d.ID, b.ID, SideLeft); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := uc.AdminTeamStats(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := stats[a.ID]
+	if !got.Volume.Min.Equal(decimal.RequireFromString("50")) || !got.Volume.Max.Equal(decimal.RequireFromString("500")) || !got.Volume.Total.Equal(decimal.RequireFromString("550")) {
+		t.Fatalf("A volume=%+v", got.Volume)
+	}
+	if !got.Paired.Equal(decimal.RequireFromString("200")) {
+		t.Fatalf("A paired=%s", got.Paired)
+	}
+	if stats[a.ID].Volume.Total.Equal(decimal.RequireFromString("650")) {
+		t.Fatal("total must exclude self paid_amount")
+	}
+}
+
 func TestListRecommend_SubtreePaidAndScope(t *testing.T) {
 	users := newMemUsers()
 	a, err := users.Create(context.Background(), &User{Address: "0xa", PaidAmount: decimal.RequireFromString("100")})

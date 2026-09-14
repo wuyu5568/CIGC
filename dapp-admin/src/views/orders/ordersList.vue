@@ -36,7 +36,7 @@ const reasonType = {
     dynamic: '动态收益',
     direct: '直推奖励',
     match: '对碰奖励',
-    manage: '三代管理奖',
+    manage: '管理奖',
 }
 
 export default {

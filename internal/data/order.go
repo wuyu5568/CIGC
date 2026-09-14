@@ -25,6 +25,7 @@ func toBizPackage(m *PackageModel) *biz.Package {
 		ReleaseDays: m.ReleaseDays,
 		SortOrder:   m.SortOrder,
 		Enabled:     m.Enabled,
+		Image:       m.Image,
 	}
 }
 
@@ -57,9 +58,12 @@ func (r *packageRepo) ListAll(ctx context.Context) ([]*biz.Package, error) {
 	return out, nil
 }
 
-func (r *packageRepo) FindByAmount(ctx context.Context, amount decimal.Decimal) (*biz.Package, error) {
+func (r *packageRepo) FindByAmount(ctx context.Context, amount decimal.Decimal, days int) (*biz.Package, error) {
+	if !biz.ValidReleaseDays(days) {
+		days = biz.ReleaseDays300
+	}
 	var m PackageModel
-	if err := r.data.db.WithContext(ctx).Where("amount = ?", amount).First(&m).Error; err != nil {
+	if err := r.data.db.WithContext(ctx).Where("amount = ? AND release_days = ?", amount, days).First(&m).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, biz.ErrPackageNotFound
 		}
@@ -91,6 +95,7 @@ func (r *packageRepo) Update(ctx context.Context, p *biz.Package) (*biz.Package,
 		"release_days": p.ReleaseDays,
 		"sort_order":   p.SortOrder,
 		"enabled":      p.Enabled,
+		"image":        p.Image,
 	})
 	if res.Error != nil {
 		if isDuplicateKey(res.Error) {
@@ -113,6 +118,7 @@ func (r *packageRepo) Create(ctx context.Context, p *biz.Package) (*biz.Package,
 		ReleaseDays: p.ReleaseDays,
 		SortOrder:   p.SortOrder,
 		Enabled:     p.Enabled,
+		Image:       p.Image,
 	}
 	if err := r.data.Session(ctx).Create(&m).Error; err != nil {
 		if isDuplicateKey(err) {

@@ -18,6 +18,7 @@ var (
 	ErrPackageDisabled      = errors.BadRequest("BIZ_PACKAGE_DISABLED", "package disabled")
 	ErrPackageAmountTaken   = errors.BadRequest("BIZ_PACKAGE_AMOUNT_TAKEN", "package amount already exists")
 	ErrPackageTitle         = errors.BadRequest("BIZ_PACKAGE_TITLE", "package title required")
+	ErrPackageDesc          = errors.BadRequest("BIZ_PACKAGE_DESC", "package desc required")
 	ErrPackageInUse         = errors.BadRequest("BIZ_PACKAGE_IN_USE", "package has orders")
 	ErrOrderNotFound        = errors.NotFound("BIZ_ORDER_NOT_FOUND", "order not found")
 	ErrOrderConflict        = errors.BadRequest("BIZ_ORDER_CONFLICT", "order not pending")

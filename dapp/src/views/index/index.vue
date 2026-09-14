@@ -134,8 +134,8 @@
         </p>
       </div>
       <div class="footer">
-        <a href="/ISPAY%20Chain%20White%20Paper-1.pdf">{{ lang('下載英文白皮書') }}</a>
-        <a href="/ISPAY%20Chain%20White%20Paper-2.pdf">{{ lang('下載中文白皮書') }}</a>
+        <a href="/ISPAY%20Chain%20White%20Paper-1.pdf">{{ lang('下载英文白皮书') }}</a>
+        <a href="/ISPAY%20Chain%20White%20Paper-2.pdf">{{ lang('下载中文白皮书') }}</a>
       </div>
     </div>
     <div class="link">

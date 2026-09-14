@@ -147,13 +147,17 @@ func (m *memWithdraws) UpdatePayoutMeta(_ context.Context, id uint64, txHash, pa
 
 type memConfigs struct {
 	min             string
+	minIspay        string
 	feeRate         string
+	feeRateIspay    string
 	dailyLimit      string
 	dailyLimitIspay string
 	directRate      string
 	matchRate       string
 	manageRate      string
+	manageGens      string
 	ispayPrice      string
+	overflowHours   string
 	rows            []*BusinessConfig
 }
 
@@ -163,9 +167,17 @@ func (m *memConfigs) GetValue(_ context.Context, key string) (string, error) {
 		if m.min != "" {
 			return m.min, nil
 		}
+	case ConfigMinWithdrawIspay:
+		if m.minIspay != "" {
+			return m.minIspay, nil
+		}
 	case ConfigWithdrawFeeRate:
 		if m.feeRate != "" {
 			return m.feeRate, nil
+		}
+	case ConfigWithdrawFeeIspay:
+		if m.feeRateIspay != "" {
+			return m.feeRateIspay, nil
 		}
 	case ConfigWithdrawDaily:
 		if m.dailyLimit != "" {
@@ -187,9 +199,17 @@ func (m *memConfigs) GetValue(_ context.Context, key string) (string, error) {
 		if m.manageRate != "" {
 			return m.manageRate, nil
 		}
+	case ConfigManageGens:
+		if m.manageGens != "" {
+			return m.manageGens, nil
+		}
 	case ConfigIspayPrice:
 		if m.ispayPrice != "" {
 			return m.ispayPrice, nil
+		}
+	case ConfigOverflowHours:
+		if m.overflowHours != "" {
+			return m.overflowHours, nil
 		}
 	}
 	for _, r := range m.rows {
@@ -226,14 +246,24 @@ func (m *memConfigs) SetValue(_ context.Context, id uint64, value string) error 
 			switch r.Key {
 			case ConfigMinWithdraw:
 				m.min = value
+			case ConfigMinWithdrawIspay:
+				m.minIspay = value
+			case ConfigWithdrawFeeRate:
+				m.feeRate = value
+			case ConfigWithdrawFeeIspay:
+				m.feeRateIspay = value
 			case ConfigDirectRate:
 				m.directRate = value
 			case ConfigMatchRate:
 				m.matchRate = value
 			case ConfigManageRate:
 				m.manageRate = value
+			case ConfigManageGens:
+				m.manageGens = value
 			case ConfigIspayPrice:
 				m.ispayPrice = value
+			case ConfigOverflowHours:
+				m.overflowHours = value
 			}
 			return nil
 		}
@@ -263,7 +293,7 @@ func TestCreateWithdraw_FreezesAvailable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if wd.Status != WithdrawPending || !wd.FeeAmount.Equal(decimal.RequireFromString("2")) || !wd.CreditedAmount.Equal(decimal.RequireFromString("18")) {
+	if wd.Status != WithdrawRewarded || !wd.FeeAmount.Equal(decimal.RequireFromString("2")) || !wd.CreditedAmount.Equal(decimal.RequireFromString("18")) {
 		t.Fatalf("%+v", wd)
 	}
 	got, err := users.FindByID(context.Background(), u.ID)
@@ -366,17 +396,17 @@ func TestCreateWithdraw_DailyCap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var pendingID uint64
+	var queueID uint64
 	for _, row := range rows {
-		if row.Status == WithdrawPending {
-			pendingID = row.ID
+		if row.Status == WithdrawRewarded {
+			queueID = row.ID
 			break
 		}
 	}
-	if pendingID == 0 {
-		t.Fatal("no pending")
+	if queueID == 0 {
+		t.Fatal("no payout queue row")
 	}
-	if _, err := uc.Cancel(context.Background(), u.ID, pendingID); err != nil {
+	if _, err := uc.Cancel(context.Background(), u.ID, queueID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := uc.Create(context.Background(), u.ID, decimal.RequireFromString("10")); err != nil {
@@ -420,6 +450,42 @@ func TestCreateWithdraw_IspayDailyCapSeparate(t *testing.T) {
 	lim := uc.UserLimits(context.Background(), u.ID)
 	if !lim.Today.Equal(decimal.RequireFromString("50")) || !lim.TodayTwo.Equal(decimal.RequireFromString("2")) {
 		t.Fatalf("today usdt=%s ispay=%s", lim.Today, lim.TodayTwo)
+	}
+}
+
+func TestCreateWithdraw_IspayMinAndFee(t *testing.T) {
+	users := newMemUsers()
+	u, err := users.Create(context.Background(), &User{
+		Address:      "0xabc",
+		IspayBalance: decimal.RequireFromString("20"),
+		PaidAmount:   decimal.RequireFromString("1000"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	uc := NewWithdrawUseCase(users, users, &memLedger{}, newMemWithdraws(), &memConfigs{
+		min: "10", minIspay: "5", feeRateIspay: "0.10",
+	}, NopTx{})
+	lim := uc.UserLimits(context.Background(), u.ID)
+	if !lim.MinTwo.Equal(decimal.RequireFromString("5")) || !lim.RateTwo.Equal(decimal.RequireFromString("0.10")) {
+		t.Fatalf("limits min=%s rate=%s", lim.MinTwo, lim.RateTwo)
+	}
+	if _, err := uc.CreateAsset(context.Background(), u.ID, decimal.RequireFromString("4"), WithdrawAssetIspay); !errors.Is(err, ErrWithdrawBelowMin) {
+		t.Fatalf("below min: %v", err)
+	}
+	wd, err := uc.CreateAsset(context.Background(), u.ID, decimal.RequireFromString("10"), WithdrawAssetIspay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !wd.FeeAmount.Equal(decimal.RequireFromString("1")) || !wd.CreditedAmount.Equal(decimal.RequireFromString("9")) {
+		t.Fatalf("fee=%s credited=%s", wd.FeeAmount, wd.CreditedAmount)
+	}
+	got, err := users.FindByID(context.Background(), u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.IspayBalance.Equal(decimal.RequireFromString("10")) || !got.FrozenIspay.Equal(decimal.RequireFromString("10")) {
+		t.Fatalf("freeze application amount, ispay=%s frozen=%s", got.IspayBalance, got.FrozenIspay)
 	}
 }
 
@@ -526,8 +592,8 @@ func TestCreateWithdraw_IspayInactiveAndFreeze(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if wd.Asset != WithdrawAssetIspay {
-		t.Fatalf("asset=%s", wd.Asset)
+	if wd.Asset != WithdrawAssetIspay || wd.Status != WithdrawPending {
+		t.Fatalf("asset=%s status=%s", wd.Asset, wd.Status)
 	}
 	got, err := users.FindByID(context.Background(), active.ID)
 	if err != nil {
@@ -607,12 +673,8 @@ func TestWithdrawPassKeepsFrozen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := uc.Pass(context.Background(), wd.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Status != WithdrawRewarded {
-		t.Fatalf("status %s", got.Status)
+	if wd.Status != WithdrawRewarded {
+		t.Fatalf("status %s", wd.Status)
 	}
 	u2, err := users.FindByID(context.Background(), u.ID)
 	if err != nil {
@@ -622,7 +684,7 @@ func TestWithdrawPassKeepsFrozen(t *testing.T) {
 		t.Fatalf("frozen=%s", u2.FrozenBalance)
 	}
 	if _, err := uc.Pass(context.Background(), wd.ID); !errors.Is(err, ErrWithdrawConflict) {
-		t.Fatalf("double pass: %v", err)
+		t.Fatalf("usdt pass: %v", err)
 	}
 }
 
@@ -694,12 +756,15 @@ func TestListUserWithdrawPagination(t *testing.T) {
 
 type memPayer struct {
 	hash    string
+	from    string
 	sendErr error
 	ok      bool
 	pending bool
 	recErr  error
 	sends   int
 }
+
+func (m *memPayer) FromAddress() string { return m.from }
 
 func (m *memPayer) TransferUSDT(_ context.Context, _ string, _ decimal.Decimal) (string, error) {
 	m.sends++
@@ -724,13 +789,6 @@ func rewardedUSDT(t *testing.T, users *memUsers, uc *WithdrawUseCase, avail stri
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := uc.Pass(context.Background(), wd.ID); err != nil {
-		t.Fatal(err)
-	}
-	wd, err = uc.withdraws.FindByID(context.Background(), wd.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
 	return u, wd
 }
 
@@ -744,8 +802,11 @@ func TestRunPayout_Disabled(t *testing.T) {
 func TestRunPayout_SuccessBurnsFrozen(t *testing.T) {
 	users := newMemUsers()
 	uc := newWithdrawUC(users, &memLedger{}, newMemWithdraws(), "10")
-	p := &memPayer{hash: "0xabc", ok: true}
+	p := &memPayer{hash: "0xabc", ok: true, from: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
 	uc.SetPayout(p, true, decimal.RequireFromString("100"))
+	if uc.HotWalletAddress() != p.from {
+		t.Fatalf("hot=%s", uc.HotWalletAddress())
+	}
 	u, _ := rewardedUSDT(t, users, uc, "50")
 	res, err := uc.RunPayout(context.Background(), 0)
 	if err != nil {

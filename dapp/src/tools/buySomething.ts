@@ -6,7 +6,13 @@ import lang from '@/i18n/index'
 const USDT = new Contract(import.meta.env.VITE_USDT, 'ERC20')
 
 export function resolveBuyAddress(fromApi?: string): string {
-  return String(fromApi || import.meta.env.VITE_BUY || '').trim()
+  const person = userPerson()
+  return String(
+    fromApi ||
+      person.userinfo?.buy_contract ||
+      import.meta.env.VITE_BUY ||
+      ''
+  ).trim()
 }
 
 export async function payBuySomething(amount: string | number, buyAddr?: string): Promise<void> {
@@ -22,14 +28,19 @@ export async function payBuySomething(amount: string | number, buyAddr?: string)
   if (bound && ETH.account.toLowerCase() !== bound) {
     throw lang('请使用登录钱包支付')
   }
-  const raw = ethers.utils.parseUnits(String(amount).replace(/,/g, '').trim(), 18)
-  if (raw.lte(0) || !raw.mod(ethers.BigNumber.from('10000000000')).isZero()) {
+  const whole = String(amount).replace(/,/g, '').trim()
+  if (!/^\d+(\.0+)?$/.test(whole)) {
     throw lang('金额错误')
   }
+  const num = ethers.BigNumber.from(whole.split('.')[0])
+  if (num.lt(5)) {
+    throw lang('充值金额不能小于5')
+  }
+  const raw = ethers.utils.parseUnits(num.toString(), 18)
   const allowance = await USDT.call('allowance', [ETH.account, addr])
   if (ethers.BigNumber.from(allowance.toString()).lt(raw)) {
     await USDT.approve(addr)
   }
   const BUY = new Contract(addr, 'BUY')
-  await BUY.send('buy', [raw])
+  await BUY.send('buy', [num])
 }

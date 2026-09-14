@@ -3,6 +3,7 @@ package data
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -86,6 +87,80 @@ func (c *ethRPCClient) BlockNumber(ctx context.Context) (uint64, error) {
 		return 0, err
 	}
 	return parseHexUint64(hexNum)
+}
+
+const (
+	sigGetUserLength         = "getUserLength()"
+	sigGetUsersByIndex       = "getUsersByIndex(uint256,uint256)"
+	sigGetUsersAmountByIndex = "getUsersAmountByIndex(uint256,uint256)"
+)
+
+func (c *ethRPCClient) ethCall(ctx context.Context, to string, data []byte, atBlock uint64) ([]byte, error) {
+	to = wallet.NormalizeOrEmpty(to)
+	if to == "" {
+		return nil, fmt.Errorf("empty call address")
+	}
+	var hexResult string
+	err := c.call(ctx, "eth_call", []any{
+		map[string]any{
+			"to":   to,
+			"data": "0x" + hex.EncodeToString(data),
+		},
+		fmt.Sprintf("0x%x", atBlock),
+	}, &hexResult)
+	if err != nil {
+		return nil, err
+	}
+	return parseHexBytes(hexResult)
+}
+
+func (c *ethRPCClient) BuyLength(ctx context.Context, contract string, atBlock uint64) (uint64, error) {
+	raw, err := c.ethCall(ctx, contract, encodeCall(sigGetUserLength), atBlock)
+	if err != nil {
+		return 0, err
+	}
+	n, err := decodeABIUint256(raw)
+	if err != nil {
+		return 0, err
+	}
+	if !n.IsUint64() {
+		return 0, fmt.Errorf("buy length overflows uint64")
+	}
+	return n.Uint64(), nil
+}
+
+func (c *ethRPCClient) ListBuys(ctx context.Context, contract string, start, end, atBlock uint64) ([]*biz.ChainBuy, error) {
+	if end < start {
+		return nil, fmt.Errorf("bad buy range")
+	}
+	usersRaw, err := c.ethCall(ctx, contract, encodeCall(sigGetUsersByIndex, start, end), atBlock)
+	if err != nil {
+		return nil, err
+	}
+	amtsRaw, err := c.ethCall(ctx, contract, encodeCall(sigGetUsersAmountByIndex, start, end), atBlock)
+	if err != nil {
+		return nil, err
+	}
+	addrs, err := decodeABIAddressArray(usersRaw)
+	if err != nil {
+		return nil, err
+	}
+	amts, err := decodeABIUint256Array(amtsRaw)
+	if err != nil {
+		return nil, err
+	}
+	if len(addrs) != len(amts) {
+		return nil, fmt.Errorf("buy users/amounts length mismatch")
+	}
+	out := make([]*biz.ChainBuy, 0, len(addrs))
+	for i := range addrs {
+		out = append(out, &biz.ChainBuy{
+			Index:  start + uint64(i),
+			User:   addrs[i],
+			Amount: amts[i],
+		})
+	}
+	return out, nil
 }
 
 func (c *ethRPCClient) ListTransfers(ctx context.Context, token, to string, fromBlock, toBlock uint64) ([]*biz.ChainTransfer, error) {

@@ -49,7 +49,7 @@ const open = (t) => {
 
 const transferUsdt = async (count) => {
   try {
-    await payBuySomething(count)
+    await payBuySomething(count, userinfo.buy_contract)
     loading = false;
     closeToast()
     showDialog({

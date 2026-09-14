@@ -30,6 +30,16 @@ func TestTokenRawAndCalldata(t *testing.T) {
 	if hex.EncodeToString(data[16:36]) != "1111111111111111111111111111111111111111" {
 		t.Fatalf("to=%x", data[4:36])
 	}
+	balData, err := ERC20BalanceOfData("0x1111111111111111111111111111111111111111")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hex.EncodeToString(balData[:4]) != balanceOfSelector {
+		t.Fatalf("balanceOf sel=%x", balData[:4])
+	}
+	if hex.EncodeToString(balData[16:36]) != "1111111111111111111111111111111111111111" {
+		t.Fatalf("holder=%x", balData[4:36])
+	}
 }
 
 func TestSignLegacyTxRecovers(t *testing.T) {

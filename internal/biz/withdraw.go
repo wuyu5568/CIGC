@@ -3,6 +3,7 @@ package biz
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cigc/app/internal/pkg/money"
@@ -167,17 +168,19 @@ const payoutBatchLimit = 20
 
 // WithdrawUseCase 提现申请、审核与 USDT 打款。
 type WithdrawUseCase struct {
-	users     UserRepo
-	balances  UserBalanceRepo
-	ledger    LedgerRepo
-	withdraws WithdrawRepo
-	configs   ConfigRepo
-	tx        TxRunner
-	now       func() time.Time
-	loc       *time.Location
-	payer     ChainPayer
-	payoutOn  bool
-	payoutMax decimal.Decimal
+	users      UserRepo
+	balances   UserBalanceRepo
+	ledger     LedgerRepo
+	withdraws  WithdrawRepo
+	configs    ConfigRepo
+	tx         TxRunner
+	now        func() time.Time
+	loc        *time.Location
+	payer      ChainPayer
+	payoutOn   bool
+	payoutMax  decimal.Decimal
+	payoutFrom string
+	payoutMu   sync.Mutex
 }
 
 // NewWithdrawUseCase 构造提现用例。
@@ -244,29 +247,52 @@ func (uc *WithdrawUseCase) shanghaiDayRange(now time.Time) (time.Time, time.Time
 }
 
 func (uc *WithdrawUseCase) minAmount(ctx context.Context) decimal.Decimal {
-	raw := defaultMinWithdraw
+	return uc.minAmountOf(ctx, WithdrawAssetUSDT)
+}
+
+func (uc *WithdrawUseCase) minAmountOf(ctx context.Context, asset string) decimal.Decimal {
+	key := ConfigMinWithdraw
+	fallback := defaultMinWithdraw
+	if asset == WithdrawAssetIspay {
+		key = ConfigMinWithdrawIspay
+		fallback = defaultMinIspay
+	}
+	raw := fallback
 	if uc.configs != nil {
-		if v, err := uc.configs.GetValue(ctx, ConfigMinWithdraw); err == nil && v != "" {
+		if v, err := uc.configs.GetValue(ctx, key); err == nil && strings.TrimSpace(v) != "" {
 			raw = v
 		}
 	}
-	d, err := decimal.NewFromString(raw)
-	if err != nil {
+	d, err := decimal.NewFromString(strings.TrimSpace(raw))
+	if err != nil || d.IsNegative() {
+		d = decimal.RequireFromString(fallback)
+	}
+	if asset != WithdrawAssetIspay && !d.IsPositive() {
 		d = decimal.RequireFromString(defaultMinWithdraw)
 	}
 	return money.Round(d)
 }
 
 func (uc *WithdrawUseCase) usdtFeeRate(ctx context.Context) decimal.Decimal {
-	raw := defaultWithdrawFee
+	return uc.feeRateOf(ctx, WithdrawAssetUSDT)
+}
+
+func (uc *WithdrawUseCase) feeRateOf(ctx context.Context, asset string) decimal.Decimal {
+	key := ConfigWithdrawFeeRate
+	fallback := defaultWithdrawFee
+	if asset == WithdrawAssetIspay {
+		key = ConfigWithdrawFeeIspay
+		fallback = defaultFeeIspay
+	}
+	raw := fallback
 	if uc.configs != nil {
-		if v, err := uc.configs.GetValue(ctx, ConfigWithdrawFeeRate); err == nil && strings.TrimSpace(v) != "" {
+		if v, err := uc.configs.GetValue(ctx, key); err == nil && strings.TrimSpace(v) != "" {
 			raw = v
 		}
 	}
 	d, err := decimal.NewFromString(strings.TrimSpace(raw))
 	if err != nil || d.IsNegative() || d.GreaterThan(decimal.NewFromInt(1)) {
-		d = decimal.RequireFromString(defaultWithdrawFee)
+		d = decimal.RequireFromString(fallback)
 	}
 	return money.Round(d)
 }
@@ -340,6 +366,8 @@ func splitWithdrawFee(amount, rate decimal.Decimal) (fee, credited decimal.Decim
 type WithdrawLimits struct {
 	Min       decimal.Decimal
 	Rate      decimal.Decimal
+	MinTwo    decimal.Decimal
+	RateTwo   decimal.Decimal
 	Daily     decimal.Decimal
 	Today     decimal.Decimal
 	Remain    decimal.Decimal
@@ -359,17 +387,21 @@ func remainOf(daily, today decimal.Decimal) decimal.Decimal {
 	return out
 }
 
-// UserLimits 用户端展示的最低额、USDT 费率与当日额度；ISPAY 费率/最低额本刀为 0，日限额分开计。
+// UserLimits 用户端展示的最低额、费率与当日额度；USDT / ISPAY 分开读配置。
 func (uc *WithdrawUseCase) UserLimits(ctx context.Context, userID uint64) WithdrawLimits {
 	out := WithdrawLimits{
-		Min:  decimal.RequireFromString(defaultMinWithdraw),
-		Rate: decimal.RequireFromString(defaultWithdrawFee),
+		Min:     decimal.RequireFromString(defaultMinWithdraw),
+		Rate:    decimal.RequireFromString(defaultWithdrawFee),
+		MinTwo:  decimal.RequireFromString(defaultMinIspay),
+		RateTwo: decimal.RequireFromString(defaultFeeIspay),
 	}
 	if uc == nil {
 		return out
 	}
-	out.Min = uc.minAmount(ctx)
-	out.Rate = uc.usdtFeeRate(ctx)
+	out.Min = uc.minAmountOf(ctx, WithdrawAssetUSDT)
+	out.Rate = uc.feeRateOf(ctx, WithdrawAssetUSDT)
+	out.MinTwo = uc.minAmountOf(ctx, WithdrawAssetIspay)
+	out.RateTwo = uc.feeRateOf(ctx, WithdrawAssetIspay)
 	out.Daily = uc.dailyLimitOf(ctx, WithdrawAssetUSDT)
 	out.DailyTwo = uc.dailyLimitOf(ctx, WithdrawAssetIspay)
 	if used, err := uc.usedToday(ctx, userID, WithdrawAssetUSDT); err == nil {
@@ -383,12 +415,12 @@ func (uc *WithdrawUseCase) UserLimits(ctx context.Context, userID uint64) Withdr
 	return out
 }
 
-// Create 从 available 扣到 frozen，写冻结流水，状态 pending。
+// Create 从 available 扣到 frozen，写冻结流水；USDT 直接进打款队列。
 func (uc *WithdrawUseCase) Create(ctx context.Context, userID uint64, amount decimal.Decimal) (*Withdraw, error) {
 	return uc.CreateAsset(ctx, userID, amount, WithdrawAssetUSDT)
 }
 
-// CreateAsset 按币种提现。未激活一律拒绝。USDT：available→frozen；ISPAY：ispay→frozen_ispay。
+// CreateAsset 按币种提现。未激活一律拒绝。USDT：available→frozen，状态 rewarded 进打款队列；ISPAY：ispay→frozen_ispay，仍 pending 待审。
 func (uc *WithdrawUseCase) CreateAsset(ctx context.Context, userID uint64, amount decimal.Decimal, asset string) (*Withdraw, error) {
 	if asset != WithdrawAssetUSDT && asset != WithdrawAssetIspay {
 		return nil, ErrInvalidWithdrawAsset
@@ -397,11 +429,9 @@ func (uc *WithdrawUseCase) CreateAsset(ctx context.Context, userID uint64, amoun
 	if !amount.IsPositive() {
 		return nil, ErrInvalidAmount
 	}
-	if asset == WithdrawAssetUSDT {
-		min := uc.minAmount(ctx)
-		if amount.LessThan(min) {
-			return nil, ErrWithdrawBelowMin
-		}
+	min := uc.minAmountOf(ctx, asset)
+	if amount.LessThan(min) {
+		return nil, ErrWithdrawBelowMin
 	}
 	user, err := uc.users.FindByID(ctx, userID)
 	if err != nil {
@@ -413,14 +443,9 @@ func (uc *WithdrawUseCase) CreateAsset(ctx context.Context, userID uint64, amoun
 	if !user.IsActivated() {
 		return nil, ErrUserInactive
 	}
-	fee := decimal.Zero
-	credited := amount
-	if asset == WithdrawAssetUSDT {
-		var errFee error
-		fee, credited, errFee = splitWithdrawFee(amount, uc.usdtFeeRate(ctx))
-		if errFee != nil {
-			return nil, errFee
-		}
+	fee, credited, errFee := splitWithdrawFee(amount, uc.feeRateOf(ctx, asset))
+	if errFee != nil {
+		return nil, errFee
 	}
 	if err := uc.checkDailyCap(ctx, userID, asset, amount); err != nil {
 		return nil, err
@@ -482,7 +507,7 @@ func (uc *WithdrawUseCase) CreateAsset(ctx context.Context, userID uint64, amoun
 			FeeAmount:      fee,
 			CreditedAmount: credited,
 			Asset:          asset,
-			Status:         WithdrawPending,
+			Status:         withdrawCreateStatus(asset),
 			CreatedAt:      uc.now(),
 		})
 		if err != nil {
@@ -495,6 +520,13 @@ func (uc *WithdrawUseCase) CreateAsset(ctx context.Context, userID uint64, amoun
 		return nil, err
 	}
 	return created, nil
+}
+
+func withdrawCreateStatus(asset string) string {
+	if asset == WithdrawAssetUSDT {
+		return WithdrawRewarded
+	}
+	return WithdrawPending
 }
 
 // ListUser 用户提现列表后分页。
@@ -612,7 +644,7 @@ func (uc *WithdrawUseCase) unfreezePending(ctx context.Context, w *Withdraw, rem
 	})
 }
 
-// Reject pending → rejected，frozen 退回 available，写解冻流水。
+// Reject pending/rewarded → rejected（尚未打款），frozen 退回 available。
 func (uc *WithdrawUseCase) Reject(ctx context.Context, id uint64) (*Withdraw, error) {
 	if id == 0 {
 		return nil, ErrInvalidAmount
@@ -623,14 +655,14 @@ func (uc *WithdrawUseCase) Reject(ctx context.Context, id uint64) (*Withdraw, er
 		if err != nil {
 			return err
 		}
-		if w.Status != WithdrawPending {
+		if w.Status != WithdrawPending && w.Status != WithdrawRewarded {
 			return ErrWithdrawConflict
 		}
 		if err := uc.unfreezePending(ctx, w, "withdraw reject unfreeze"); err != nil {
 			return err
 		}
 		now := uc.now()
-		if err := uc.withdraws.CasStatus(ctx, id, WithdrawPending, WithdrawRejected, w.Remark, &now); err != nil {
+		if err := uc.withdraws.CasStatus(ctx, id, w.Status, WithdrawRejected, w.Remark, &now); err != nil {
 			return err
 		}
 		w.Status = WithdrawRejected
@@ -644,7 +676,7 @@ func (uc *WithdrawUseCase) Reject(ctx context.Context, id uint64) (*Withdraw, er
 	return out, nil
 }
 
-// Cancel 用户取消本人 pending，解冻口径与拒绝相同。
+// Cancel 用户取消本人 pending/rewarded（尚未打款），解冻口径与拒绝相同。
 func (uc *WithdrawUseCase) Cancel(ctx context.Context, userID, id uint64) (*Withdraw, error) {
 	if userID == 0 || id == 0 {
 		return nil, ErrInvalidAmount
@@ -658,14 +690,14 @@ func (uc *WithdrawUseCase) Cancel(ctx context.Context, userID, id uint64) (*With
 		if w.UserID != userID {
 			return ErrForbidden
 		}
-		if w.Status != WithdrawPending {
+		if w.Status != WithdrawPending && w.Status != WithdrawRewarded {
 			return ErrWithdrawConflict
 		}
 		if err := uc.unfreezePending(ctx, w, "withdraw cancel unfreeze"); err != nil {
 			return err
 		}
 		now := uc.now()
-		if err := uc.withdraws.CasStatus(ctx, id, WithdrawPending, WithdrawCancelled, w.Remark, &now); err != nil {
+		if err := uc.withdraws.CasStatus(ctx, id, w.Status, WithdrawCancelled, w.Remark, &now); err != nil {
 			return err
 		}
 		w.Status = WithdrawCancelled
@@ -687,6 +719,26 @@ func (uc *WithdrawUseCase) SetPayout(payer ChainPayer, enabled bool, maxUSDT dec
 	uc.payer = payer
 	uc.payoutOn = enabled && payer != nil && maxUSDT.IsPositive()
 	uc.payoutMax = money.Round(maxUSDT)
+	uc.payoutFrom = ""
+	if p, ok := payer.(interface{ FromAddress() string }); ok {
+		uc.payoutFrom = p.FromAddress()
+	}
+}
+
+// HotWalletAddress 热钱包地址（无私钥）。
+func (uc *WithdrawUseCase) HotWalletAddress() string {
+	if uc == nil {
+		return ""
+	}
+	return uc.payoutFrom
+}
+
+// PayoutMaxUSDT 单笔打款上限。
+func (uc *WithdrawUseCase) PayoutMaxUSDT() decimal.Decimal {
+	if uc == nil {
+		return decimal.Zero
+	}
+	return uc.payoutMax
 }
 
 // PayoutEnabled 是否允许打款。
@@ -696,6 +748,8 @@ func (uc *WithdrawUseCase) PayoutEnabled() bool {
 
 // RunPayout 扫 rewarded/doing 的 USDT 单并打款。id>0 只处理该单。
 func (uc *WithdrawUseCase) RunPayout(ctx context.Context, id uint64) (*PayoutResult, error) {
+	uc.payoutMu.Lock()
+	defer uc.payoutMu.Unlock()
 	res := &PayoutResult{Enabled: uc.PayoutEnabled()}
 	if !res.Enabled {
 		return res, ErrPayoutDisabled

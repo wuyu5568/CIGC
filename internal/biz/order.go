@@ -28,6 +28,7 @@ type Package struct {
 	ReleaseDays int
 	SortOrder   int
 	Enabled     bool
+	Image       string
 }
 
 // Order 是套餐购买单。仅 paid 计入 paid_amount。
@@ -85,7 +86,7 @@ func (o *Order) DisplayNo() string {
 type PackageRepo interface {
 	ListEnabled(ctx context.Context) ([]*Package, error)
 	ListAll(ctx context.Context) ([]*Package, error)
-	FindByAmount(ctx context.Context, amount decimal.Decimal) (*Package, error)
+	FindByAmount(ctx context.Context, amount decimal.Decimal, days int) (*Package, error)
 	FindByID(ctx context.Context, id uint64) (*Package, error)
 	Create(ctx context.Context, p *Package) (*Package, error)
 	Update(ctx context.Context, p *Package) (*Package, error)
@@ -162,6 +163,39 @@ func (uc *OrderUseCase) ListAllPackages(ctx context.Context) ([]*Package, error)
 	return uc.packages.ListAll(ctx)
 }
 
+// PackageReleaseDays 套餐默认释放档；非法或缺省按 300。
+func PackageReleaseDays(p *Package) int {
+	if p == nil || !ValidReleaseDays(p.ReleaseDays) {
+		return ReleaseDays300
+	}
+	return p.ReleaseDays
+}
+
+// FilterPackagesByDays 按释放天数精确过滤；days=0 表示不过滤。
+func FilterPackagesByDays(pkgs []*Package, days int) []*Package {
+	if days == 0 {
+		return pkgs
+	}
+	out := make([]*Package, 0, len(pkgs))
+	for _, p := range pkgs {
+		if PackageReleaseDays(p) == days {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// FilterEnabledPackages 只保留上架商品。
+func FilterEnabledPackages(pkgs []*Package) []*Package {
+	out := make([]*Package, 0, len(pkgs))
+	for _, p := range pkgs {
+		if p != nil && p.Enabled {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // UpdatePackage 管理端改套餐金额与默认释放天数。
 func (uc *OrderUseCase) UpdatePackage(ctx context.Context, id uint64, amount decimal.Decimal, days int) (*Package, error) {
 	amount = money.Round(amount)
@@ -175,7 +209,7 @@ func (uc *OrderUseCase) UpdatePackage(ctx context.Context, id uint64, amount dec
 	if err != nil {
 		return nil, err
 	}
-	other, err := uc.packages.FindByAmount(ctx, amount)
+	other, err := uc.packages.FindByAmount(ctx, amount, days)
 	if err != nil && !errors.Is(err, ErrPackageNotFound) {
 		return nil, err
 	}
@@ -213,8 +247,8 @@ func normalizePackage(p *Package) error {
 	return nil
 }
 
-func (uc *OrderUseCase) ensureAmountFree(ctx context.Context, id uint64, amount decimal.Decimal) error {
-	other, err := uc.packages.FindByAmount(ctx, amount)
+func (uc *OrderUseCase) ensureAmountFree(ctx context.Context, id uint64, amount decimal.Decimal, days int) error {
+	other, err := uc.packages.FindByAmount(ctx, amount, days)
 	if err != nil && !errors.Is(err, ErrPackageNotFound) {
 		return err
 	}
@@ -229,7 +263,7 @@ func (uc *OrderUseCase) CreatePackage(ctx context.Context, p *Package) (*Package
 	if err := normalizePackage(p); err != nil {
 		return nil, err
 	}
-	if err := uc.ensureAmountFree(ctx, 0, p.Amount); err != nil {
+	if err := uc.ensureAmountFree(ctx, 0, p.Amount, p.ReleaseDays); err != nil {
 		return nil, err
 	}
 	p.ID = 0
@@ -246,14 +280,18 @@ func (uc *OrderUseCase) SavePackage(ctx context.Context, p *Package) (*Package, 
 	if p == nil || p.ID == 0 {
 		return nil, ErrPackageNotFound
 	}
-	if _, err := uc.packages.FindByID(ctx, p.ID); err != nil {
+	cur, err := uc.packages.FindByID(ctx, p.ID)
+	if err != nil {
 		return nil, err
 	}
 	if err := normalizePackage(p); err != nil {
 		return nil, err
 	}
-	if err := uc.ensureAmountFree(ctx, p.ID, p.Amount); err != nil {
+	if err := uc.ensureAmountFree(ctx, p.ID, p.Amount, p.ReleaseDays); err != nil {
 		return nil, err
+	}
+	if strings.TrimSpace(p.Image) == "" {
+		p.Image = cur.Image
 	}
 	return uc.packages.Update(ctx, p)
 }
@@ -264,6 +302,225 @@ func (uc *OrderUseCase) DeletePackage(ctx context.Context, id uint64) error {
 		return ErrPackageNotFound
 	}
 	if _, err := uc.packages.FindByID(ctx, id); err != nil {
+		return err
+	}
+	return uc.packages.Delete(ctx, id)
+}
+
+const (
+	DefaultWeb3GoodsPageSize = 10
+	MaxWeb3GoodsPageSize     = 100
+)
+
+// Web3GoodsInput 管理端按释放天数分类的商品写入。
+type Web3GoodsInput struct {
+	ID          uint64
+	Name        string
+	Desc        string
+	Amount      decimal.Decimal
+	DailyCap    decimal.Decimal
+	Days        int
+	Sort        int
+	OnSale      bool
+	Image       string
+	HasDailyCap bool
+	HasSort     bool
+	HasOnSale   bool
+	HasImage    bool
+}
+
+func requireWeb3Days(days int) error {
+	if !ValidReleaseDays(days) {
+		return ErrInvalidReleaseDays
+	}
+	return nil
+}
+
+func paginateWeb3Goods(page, pageSize int) (int, int) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = DefaultWeb3GoodsPageSize
+	}
+	if pageSize > MaxWeb3GoodsPageSize {
+		pageSize = MaxWeb3GoodsPageSize
+	}
+	return page, pageSize
+}
+
+func normalizeWeb3Goods(in *Web3GoodsInput, create bool) error {
+	if in == nil {
+		return ErrPackageNotFound
+	}
+	if err := requireWeb3Days(in.Days); err != nil {
+		return err
+	}
+	in.Name = strings.TrimSpace(in.Name)
+	in.Desc = strings.TrimSpace(in.Desc)
+	in.Image = strings.TrimSpace(in.Image)
+	in.Amount = money.Round(in.Amount)
+	in.DailyCap = money.Round(in.DailyCap)
+	if in.Desc == "" {
+		return ErrPackageDesc
+	}
+	if in.Name == "" {
+		in.Name = in.Desc
+	}
+	if !in.Amount.IsPositive() {
+		return ErrInvalidAmount
+	}
+	if in.DailyCap.IsNegative() {
+		return ErrInvalidAmount
+	}
+	if create {
+		if !in.HasDailyCap {
+			in.DailyCap = decimal.Zero
+		}
+		if !in.HasSort {
+			in.Sort = 0
+		}
+		if !in.HasOnSale {
+			in.OnSale = true
+		}
+	}
+	if in.HasImage {
+		in.Image = strings.TrimSpace(in.Image)
+	}
+	return nil
+}
+
+func (uc *OrderUseCase) ensureAmountFreeInDays(ctx context.Context, id uint64, days int, amount decimal.Decimal) error {
+	pkgs, err := uc.packages.ListAll(ctx)
+	if err != nil {
+		return err
+	}
+	for _, p := range pkgs {
+		if p == nil || p.ID == id {
+			continue
+		}
+		if PackageReleaseDays(p) != days {
+			continue
+		}
+		if p.Amount.Equal(amount) {
+			return ErrPackageAmountTaken
+		}
+	}
+	return nil
+}
+
+func (uc *OrderUseCase) requirePackageInDays(ctx context.Context, id uint64, days int) (*Package, error) {
+	if err := requireWeb3Days(days); err != nil {
+		return nil, err
+	}
+	if id == 0 {
+		return nil, ErrPackageNotFound
+	}
+	p, err := uc.packages.FindByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if PackageReleaseDays(p) != days {
+		return nil, ErrPackageNotFound
+	}
+	return p, nil
+}
+
+// ListWeb3Goods 按释放天数分页列出商品。onSaleOnly 为 true 时只返回上架（用户端）。
+func (uc *OrderUseCase) ListWeb3Goods(ctx context.Context, days, page, pageSize int, onSaleOnly bool) ([]*Package, int, error) {
+	if err := requireWeb3Days(days); err != nil {
+		return nil, 0, err
+	}
+	page, pageSize = paginateWeb3Goods(page, pageSize)
+	pkgs, err := uc.packages.ListAll(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	all := FilterPackagesByDays(pkgs, days)
+	if onSaleOnly {
+		all = FilterEnabledPackages(all)
+	}
+	total := len(all)
+	start := (page - 1) * pageSize
+	if start >= total {
+		return []*Package{}, total, nil
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+	return all[start:end], total, nil
+}
+
+func (in *Web3GoodsInput) toPackage(id uint64, image string) *Package {
+	return &Package{
+		ID:          id,
+		Amount:      in.Amount,
+		Title:       in.Name,
+		GoodsDesc:   in.Desc,
+		DailyCap:    in.DailyCap,
+		ReleaseDays: in.Days,
+		SortOrder:   in.Sort,
+		Enabled:     in.OnSale,
+		Image:       image,
+	}
+}
+
+// CreateWeb3Goods 在当前分类下新增商品。
+func (uc *OrderUseCase) CreateWeb3Goods(ctx context.Context, in *Web3GoodsInput) (*Package, error) {
+	if err := normalizeWeb3Goods(in, true); err != nil {
+		return nil, err
+	}
+	if err := uc.ensureAmountFreeInDays(ctx, 0, in.Days, in.Amount); err != nil {
+		return nil, err
+	}
+	return uc.packages.Create(ctx, in.toPackage(0, in.Image))
+}
+
+// UpdateWeb3Goods 编辑当前分类下的商品；不允许改分类。不传图片则保留原图。
+func (uc *OrderUseCase) UpdateWeb3Goods(ctx context.Context, in *Web3GoodsInput) (*Package, error) {
+	if in == nil {
+		return nil, ErrPackageNotFound
+	}
+	cur, err := uc.requirePackageInDays(ctx, in.ID, in.Days)
+	if err != nil {
+		return nil, err
+	}
+	if err := normalizeWeb3Goods(in, false); err != nil {
+		return nil, err
+	}
+	if !in.HasDailyCap {
+		in.DailyCap = cur.DailyCap
+	}
+	if !in.HasSort {
+		in.Sort = cur.SortOrder
+	}
+	if !in.HasOnSale {
+		in.OnSale = cur.Enabled
+	}
+	image := cur.Image
+	if in.HasImage {
+		image = in.Image
+	}
+	if err := uc.ensureAmountFreeInDays(ctx, cur.ID, in.Days, in.Amount); err != nil {
+		return nil, err
+	}
+	return uc.packages.Update(ctx, in.toPackage(cur.ID, image))
+}
+
+// SetWeb3GoodsOnSale 当前分类下上架/下架。
+func (uc *OrderUseCase) SetWeb3GoodsOnSale(ctx context.Context, id uint64, days int, onSale bool) (*Package, error) {
+	cur, err := uc.requirePackageInDays(ctx, id, days)
+	if err != nil {
+		return nil, err
+	}
+	cur.Enabled = onSale
+	return uc.packages.Update(ctx, cur)
+}
+
+// DeleteWeb3Goods 删除当前分类下商品；已有订单则拒绝。
+func (uc *OrderUseCase) DeleteWeb3Goods(ctx context.Context, id uint64, days int) error {
+	if _, err := uc.requirePackageInDays(ctx, id, days); err != nil {
 		return err
 	}
 	return uc.packages.Delete(ctx, id)
@@ -281,7 +538,7 @@ func (uc *OrderUseCase) CreateOrder(ctx context.Context, userID uint64, amount d
 	if _, err := uc.users.FindByID(ctx, userID); err != nil {
 		return nil, err
 	}
-	pkg, err := uc.packages.FindByAmount(ctx, amount)
+	pkg, err := uc.packages.FindByAmount(ctx, amount, days)
 	if err != nil {
 		return nil, err
 	}
@@ -311,7 +568,7 @@ func (uc *OrderUseCase) BuyWithRecharge(ctx context.Context, userID uint64, amou
 	if _, err := uc.users.FindByID(ctx, userID); err != nil {
 		return nil, err
 	}
-	pkg, err := uc.packages.FindByAmount(ctx, amount)
+	pkg, err := uc.packages.FindByAmount(ctx, amount, days)
 	if err != nil {
 		return nil, err
 	}

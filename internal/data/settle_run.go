@@ -103,6 +103,15 @@ func isForeignKey(err error) bool {
 	return strings.Contains(msg, "foreign key") || strings.Contains(msg, "1451")
 }
 
+func (r *settleRunRepo) DeleteAfter(ctx context.Context, after time.Time) (int, error) {
+	day := after.Format("2006-01-02")
+	res := r.data.db.WithContext(ctx).Where("settle_date > ?", day).Delete(&SettleRunModel{})
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	return int(res.RowsAffected), nil
+}
+
 func (r *settleRunRepo) Upsert(ctx context.Context, run *biz.SettleRun) error {
 	day := time.Date(run.SettleDate.Year(), run.SettleDate.Month(), run.SettleDate.Day(), 0, 0, 0, 0, time.UTC)
 	row := SettleRunModel{

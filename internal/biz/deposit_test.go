@@ -2,6 +2,7 @@ package biz
 
 import (
 	"context"
+	"math/big"
 	"sort"
 	"strconv"
 	"strings"
@@ -100,10 +101,23 @@ func (m *memCursors) Set(_ context.Context, name string, block uint64) error {
 	m.n[name] = block
 	return nil
 }
+func (m *memCursors) Advance(_ context.Context, name string, n uint64) error {
+	if n > m.n[name] {
+		m.n[name] = n
+	}
+	return nil
+}
+
+type memBuy struct {
+	User   string
+	Amount uint64
+	Block  uint64
+}
 
 type memChain struct {
 	head uint64
 	logs []*ChainTransfer
+	buys []memBuy
 }
 
 func (m *memChain) BlockNumber(_ context.Context) (uint64, error) { return m.head, nil }
@@ -118,6 +132,41 @@ func (m *memChain) ListTransfers(_ context.Context, _, recv string, from, to uin
 			cp := *tr
 			out = append(out, &cp)
 		}
+	}
+	return out, nil
+}
+
+func (m *memChain) BuyLength(_ context.Context, _ string, atBlock uint64) (uint64, error) {
+	var n uint64
+	for _, b := range m.buys {
+		if b.Block <= atBlock {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (m *memChain) ListBuys(_ context.Context, _ string, start, end, atBlock uint64) ([]*ChainBuy, error) {
+	var visible []memBuy
+	for _, b := range m.buys {
+		if b.Block <= atBlock {
+			visible = append(visible, b)
+		}
+	}
+	if start > end || start >= uint64(len(visible)) {
+		return nil, nil
+	}
+	if end >= uint64(len(visible)) {
+		end = uint64(len(visible) - 1)
+	}
+	out := make([]*ChainBuy, 0, end-start+1)
+	for i := start; i <= end; i++ {
+		b := visible[i]
+		out = append(out, &ChainBuy{
+			Index:  i,
+			User:   b.User,
+			Amount: new(big.Int).SetUint64(b.Amount),
+		})
 	}
 	return out, nil
 }
@@ -313,5 +362,101 @@ func TestDeposit_KeepsWrittenReceiveAddress(t *testing.T) {
 	})
 	if err != nil || st != DepositMatched {
 		t.Fatalf("st=%s err=%v", st, err)
+	}
+}
+
+func TestDeposit_ScanBuysCreditsIntegerUSDT(t *testing.T) {
+	users := newMemUsers()
+	u, err := users.Create(context.Background(), &User{Address: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	buy := "0x162bffacf7a89bb6eba05972c1de0e1e97617c18"
+	cur := newMemCursors()
+	uc := NewDepositUseCase(users, newMemOrders(users), newMemDeposits(), cur, &memChain{
+		head: 120,
+		buys: []memBuy{{User: u.Address, Amount: 1000, Block: 90}},
+	}, NopTx{}, &conf.App{
+		BuyContract:          buy,
+		UsdtAddress:          "0x55d398326f99059ff775485246999027b3197955",
+		DepositConfirmations: 12,
+	}, &memLedger{})
+	res, err := uc.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Mode != "buys" || res.Matched != 1 || res.FromIndex != 0 || res.Length != 1 {
+		t.Fatalf("%+v", res)
+	}
+	got, _ := users.FindByID(context.Background(), u.ID)
+	if !got.RechargeBalance.Equal(decimal.RequireFromString("1000")) {
+		t.Fatalf("recharge=%s", got.RechargeBalance)
+	}
+	n, _ := cur.Get(context.Background(), buyCursorName(buy))
+	if n != 1 {
+		t.Fatalf("cursor=%d", n)
+	}
+	res2, err := uc.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res2.Matched != 0 || res2.Seen != 0 {
+		t.Fatalf("second run %+v", res2)
+	}
+	got, _ = users.FindByID(context.Background(), u.ID)
+	if !got.RechargeBalance.Equal(decimal.RequireFromString("1000")) {
+		t.Fatalf("dup credited: %s", got.RechargeBalance)
+	}
+}
+
+func TestDeposit_ScanBuysWaitsConfirmations(t *testing.T) {
+	users := newMemUsers()
+	u, err := users.Create(context.Background(), &User{Address: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	uc := NewDepositUseCase(users, newMemOrders(users), newMemDeposits(), newMemCursors(), &memChain{
+		head: 120,
+		buys: []memBuy{{User: u.Address, Amount: 1000, Block: 115}},
+	}, NopTx{}, &conf.App{
+		BuyContract:          "0x162bffacf7a89bb6eba05972c1de0e1e97617c18",
+		DepositConfirmations: 12,
+	}, &memLedger{})
+	res, err := uc.ScanBuys(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Matched != 0 || res.Length != 0 {
+		t.Fatalf("unconfirmed credited %+v", res)
+	}
+	got, _ := users.FindByID(context.Background(), u.ID)
+	if !got.RechargeBalance.IsZero() {
+		t.Fatalf("recharge=%s", got.RechargeBalance)
+	}
+}
+
+func TestDeposit_ScanBuysUnknownSenderAbnormal(t *testing.T) {
+	users := newMemUsers()
+	u, err := users.Create(context.Background(), &User{Address: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	uc := NewDepositUseCase(users, newMemOrders(users), newMemDeposits(), newMemCursors(), &memChain{
+		head: 120,
+		buys: []memBuy{{User: "0xcccccccccccccccccccccccccccccccccccccccc", Amount: 500, Block: 90}},
+	}, NopTx{}, &conf.App{
+		BuyContract:          "0x162bffacf7a89bb6eba05972c1de0e1e97617c18",
+		DepositConfirmations: 12,
+	}, &memLedger{})
+	res, err := uc.ScanBuys(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Abnormal != 1 {
+		t.Fatalf("%+v", res)
+	}
+	got, _ := users.FindByID(context.Background(), u.ID)
+	if !got.RechargeBalance.IsZero() {
+		t.Fatalf("unknown credited %s", got.RechargeBalance)
 	}
 }

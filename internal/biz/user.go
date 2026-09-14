@@ -94,7 +94,7 @@ type UserBalanceRepo interface {
 	SubLockIspay(ctx context.Context, userID uint64, delta decimal.Decimal) error
 }
 
-// RecommendRepo 物化推荐祖先 path，供三代管理奖使用。
+// RecommendRepo 物化推荐祖先 path，供管理奖向上查找使用。
 type RecommendRepo interface {
 	GetPath(ctx context.Context, userID uint64) (string, error)
 	SavePath(ctx context.Context, userID uint64, path string) error
@@ -146,7 +146,8 @@ func (uc *UserUseCase) EthAuthorize(ctx context.Context, address, signature, inv
 	if !ok || signature == "" {
 		return nil, ErrInvalidSignature
 	}
-	inviteCode = wallet.NormalizeOrEmpty(inviteCode)
+	rawInvite := strings.TrimSpace(inviteCode)
+	inviteCode = wallet.NormalizeInviteCode(inviteCode)
 
 	if err := uc.verifier.Verify(address, rawAddr, signature); err != nil {
 		return nil, ErrInvalidSignature
@@ -170,10 +171,10 @@ func (uc *UserUseCase) EthAuthorize(ctx context.Context, address, signature, inv
 	var inviterID *uint64
 	isGenesis := uc.genesisAddr != "" && address == uc.genesisAddr
 	if !isGenesis {
-		if inviteCode == "" {
+		if rawInvite == "" {
 			return nil, ErrInviteRequired
 		}
-		if inviteCode == address {
+		if inviteCode == "" || inviteCode == address {
 			return nil, ErrInviteInvalid
 		}
 		inviter, err := uc.users.FindByAddress(ctx, inviteCode)
@@ -278,6 +279,25 @@ func (uc *UserUseCase) ListAdminUsers(ctx context.Context, address string, page 
 		out = append(out, row)
 	}
 	return &AdminUserPage{Items: out, Total: total}, nil
+}
+
+// InviteCountMap 直推人数（按 inviter_id，不含安置子）。
+func (uc *UserUseCase) InviteCountMap(ctx context.Context) (map[uint64]int, error) {
+	out := map[uint64]int{}
+	if uc == nil || uc.users == nil {
+		return out, nil
+	}
+	all, err := uc.users.ListAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, u := range all {
+		if u == nil || u.InviterID == nil || *u.InviterID == 0 {
+			continue
+		}
+		out[*u.InviterID]++
+	}
+	return out, nil
 }
 
 // SetUserLock 锁定/解锁会员；locked=true 写入 disabled_at，false 清空。幂等。

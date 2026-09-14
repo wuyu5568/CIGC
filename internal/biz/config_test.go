@@ -42,6 +42,49 @@ func TestNormalizeConfigValue(t *testing.T) {
 	if _, err := NormalizeConfigValue("unknown", "1"); err != ErrConfigForbidden {
 		t.Fatalf("unknown: %v", err)
 	}
+	v, err = NormalizeConfigValue(ConfigMinWithdrawIspay, "0")
+	if err != nil || v != "0" {
+		t.Fatalf("ispay min 0: %s %v", v, err)
+	}
+	v, err = NormalizeConfigValue(ConfigWithdrawFeeIspay, "0.05")
+	if err != nil || v != "0.05" {
+		t.Fatalf("ispay fee: %s %v", v, err)
+	}
+	v, err = NormalizeConfigValue(ConfigManageGens, "4")
+	if err != nil || v != "4" {
+		t.Fatalf("gens: %s %v", v, err)
+	}
+	if _, err := NormalizeConfigValue(ConfigManageGens, "11"); err != ErrConfigInvalid {
+		t.Fatalf("gens 11: %v", err)
+	}
+	if _, err := NormalizeConfigValue(ConfigManageGens, "3.5"); err != ErrConfigInvalid {
+		t.Fatalf("gens 3.5: %v", err)
+	}
+	v, err = NormalizeConfigValue(ConfigOverflowHours, "72")
+	if err != nil || v != "72" {
+		t.Fatalf("overflow hours: %s %v", v, err)
+	}
+	if _, err := NormalizeConfigValue(ConfigOverflowHours, "0"); err != ErrConfigInvalid {
+		t.Fatalf("overflow 0: %v", err)
+	}
+	if _, err := NormalizeConfigValue(ConfigOverflowHours, "721"); err != ErrConfigInvalid {
+		t.Fatalf("overflow 721: %v", err)
+	}
+}
+
+func TestConfigMeta_Groups(t *testing.T) {
+	g, _, _ := ConfigMeta(ConfigDirectRate)
+	if g != "奖励" {
+		t.Fatalf("direct group %s", g)
+	}
+	g, _, _ = ConfigMeta(ConfigMinWithdrawIspay)
+	if g != "提现" {
+		t.Fatalf("ispay min group %s", g)
+	}
+	g, _, _ = ConfigMeta(ConfigOverflowHours)
+	if g != "冻结" {
+		t.Fatalf("overflow group %s", g)
+	}
 }
 
 func TestConfigUseCase_UpdateAndSpot(t *testing.T) {

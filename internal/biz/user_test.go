@@ -2,6 +2,7 @@ package biz
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -357,6 +358,21 @@ func TestEthAuthorize_InvalidInvite(t *testing.T) {
 	if err != ErrInviteInvalid {
 		t.Fatalf("got %v", err)
 	}
+	_, err = uc.EthAuthorize(context.Background(), addrUserB, "sig", "not-an-address")
+	if err != ErrInviteInvalid {
+		t.Fatalf("garbage invite: %v", err)
+	}
+}
+
+func TestEthAuthorize_InviteWithout0x(t *testing.T) {
+	users := newMemUsers()
+	uc := NewUserUseCase(users, &memRecommends{path: map[uint64]string{}}, stubVerifier{}, stubTokens{}, &conf.Auth{}, addrGenesis, nil)
+	if _, err := uc.EthAuthorize(context.Background(), addrGenesis, "sig", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := uc.EthAuthorize(context.Background(), addrUserB, "sig", strings.TrimPrefix(addrGenesis, "0x")); err != nil {
+		t.Fatalf("hex without 0x: %v", err)
+	}
 }
 
 func TestAdminLogin(t *testing.T) {
@@ -400,6 +416,13 @@ func TestEthAuthorize_AutoPlacesByInvite(t *testing.T) {
 	}
 	assertPlaced(t, place, b.ID, genesis.ID, SideLeft)
 	assertPlaced(t, place, c.ID, genesis.ID, SideRight)
+	counts, err := uc.InviteCountMap(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts[genesis.ID] != 2 || counts[b.ID] != 0 {
+		t.Fatalf("invite counts=%v genesis=%d", counts, genesis.ID)
+	}
 	if p, err := place.GetByUser(context.Background(), genesis.ID); err != nil || p != nil {
 		t.Fatalf("genesis placed: %+v %v", p, err)
 	}

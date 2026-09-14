@@ -35,31 +35,46 @@ func NewSettleCron(app *conf.App, settle *biz.SettleUseCase) *SettleCron {
 	return &SettleCron{cronExpr: expr, loc: loc, settle: settle}
 }
 
-// Start 启动调度；表达式为空则空操作。
+// Start 启动调度；日结表达式为空仍会每分钟清除到期超额冻结。
 func (s *SettleCron) Start() {
-	if s == nil || s.cronExpr == "" || s.settle == nil {
+	if s == nil || s.settle == nil {
 		return
 	}
 	s.c = cron.New(cron.WithLocation(s.loc))
-	_, err := s.c.AddFunc(s.cronExpr, func() {
-		res, err := s.settle.Run(context.Background(), false)
+	if s.cronExpr != "" {
+		_, err := s.c.AddFunc(s.cronExpr, func() {
+			res, err := s.settle.Run(context.Background(), false)
+			if err != nil {
+				slog.Error("settle cron", "err", err)
+				return
+			}
+			if res.Skipped {
+				slog.Info("settle cron skipped", "date", res.SettleDate)
+				return
+			}
+			slog.Info("settle cron done",
+				"date", res.SettleDate,
+				"users", res.UserCount,
+				"cap_updated", res.CapUpdated,
+				"direct", res.DirectCount,
+			)
+		})
 		if err != nil {
-			slog.Error("settle cron", "err", err)
+			slog.Error("settle cron schedule", "err", err)
 			return
 		}
-		if res.Skipped {
-			slog.Info("settle cron skipped", "date", res.SettleDate)
+	}
+	if _, err := s.c.AddFunc("* * * * *", func() {
+		n, err := s.settle.ExpireCapOverflow(context.Background())
+		if err != nil {
+			slog.Error("overflow expire", "err", err)
 			return
 		}
-		slog.Info("settle cron done",
-			"date", res.SettleDate,
-			"users", res.UserCount,
-			"cap_updated", res.CapUpdated,
-			"direct", res.DirectCount,
-		)
-	})
-	if err != nil {
-		slog.Error("settle cron schedule", "err", err)
+		if n > 0 {
+			slog.Info("overflow expire done", "burned", n)
+		}
+	}); err != nil {
+		slog.Error("overflow expire schedule", "err", err)
 		return
 	}
 	s.c.Start()

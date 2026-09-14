@@ -45,6 +45,7 @@ func newApp(cfg *conf.Bootstrap, d *data.Data, logger *slog.Logger) (*kratos.App
 		data.NewConfigRepo(d),
 		data.NewPlacementRepo(d),
 		data.NewMatchRepo(d),
+		data.NewDailyCapRepo(d),
 		d,
 		&cfg.App,
 	)
@@ -75,6 +76,7 @@ func newApp(cfg *conf.Bootstrap, d *data.Data, logger *slog.Logger) (*kratos.App
 		data.NewUserBalanceRepo(d),
 		data.NewLedgerRepo(d),
 		d,
+		data.NewDailyCapRepo(d),
 	)
 	stats := biz.NewStatsUseCase(data.NewStatsRepo(d))
 	stats.SetTimezone(cfg.App.SettleTimezone)

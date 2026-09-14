@@ -10,10 +10,10 @@ CREATE TABLE IF NOT EXISTS users (
     frozen_balance     DECIMAL(36, 8)  NOT NULL DEFAULT 0 COMMENT 'usdt withdraw freeze',
     frozen_ispay       DECIMAL(36, 8)  NOT NULL DEFAULT 0 COMMENT 'ispay withdraw freeze',
     ispay_balance      DECIMAL(36, 8)  NOT NULL DEFAULT 0 COMMENT 'ispay coin balance',
-    lock_balance       DECIMAL(36, 8)  NOT NULL DEFAULT 0 COMMENT 'inactive reward USDT; not withdrawable',
-    lock_ispay         DECIMAL(36, 8)  NOT NULL DEFAULT 0 COMMENT 'inactive reward ispay',
+    lock_balance       DECIMAL(36, 8)  NOT NULL DEFAULT 0 COMMENT 'inactive reward + daily-cap overflow USDT',
+    lock_ispay         DECIMAL(36, 8)  NOT NULL DEFAULT 0 COMMENT 'inactive reward + daily-cap overflow ispay',
     paid_amount        DECIMAL(36, 8)  NOT NULL DEFAULT 0 COMMENT 'cumulative paid order amount',
-    cap_effective      DECIMAL(36, 8)  NOT NULL DEFAULT 0 COMMENT 'daily match cap used by settle',
+    cap_effective      DECIMAL(36, 8)  NOT NULL DEFAULT 0 COMMENT 'daily dynamic cap from max paid order',
     disabled_at        DATETIME(3)     NULL COMMENT 'soft delete / disabled',
     created_at         DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     updated_at         DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
@@ -54,16 +54,17 @@ CREATE TABLE IF NOT EXISTS packages (
     release_days  INT             NOT NULL DEFAULT 300 COMMENT '300|600|750 default static release',
     sort_order    INT             NOT NULL DEFAULT 0,
     enabled     TINYINT(1)      NOT NULL DEFAULT 1,
+    image       VARCHAR(512)    NOT NULL DEFAULT '',
     created_at  DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     updated_at  DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-    UNIQUE KEY uk_packages_amount (amount),
+    UNIQUE KEY uk_packages_amount_days (amount, release_days),
     KEY idx_packages_sort (sort_order, id)
 ) ENGINE=InnoDB DEFAULT CHARSET utf8mb4;
 
 INSERT INTO packages (amount, title, goods_desc, daily_cap, sort_order, enabled) VALUES
-(1000,    '牙刷挖矿', '牙刷挖矿', 600,     10, 1),
-(3000,    'AI眼镜挖矿', 'AI眼镜挖矿', 1800,    20, 1),
-(6000,    '分布式存储芯片挖矿机', '分布式存储芯片挖矿机', 4000,    30, 1),
+(1000,    '1,000 组合', '牙刷挖矿', 600,     10, 1),
+(3000,    '3,000 组合', 'AI眼镜挖矿', 1800,    20, 1),
+(6000,    '6,000 组合', '分布式存储芯片挖矿机', 4000,    30, 1),
 (12000,   '12,000 组合', '分布式存储芯片挖矿＋手机挖矿＋黄金钻石戒指＋多肽', 8000,    40, 1),
 (24000,   '24,000 组合', '分布式存储芯片挖矿＋手机挖矿＋黄金钻石手链＋多肽', 16000,   50, 1),
 (36000,   '36,000 组合', '分布式存储芯片挖矿＋手机挖矿＋黄金钻石项链＋多肽', 24000,   60, 1),
@@ -73,6 +74,14 @@ INSERT INTO packages (amount, title, goods_desc, daily_cap, sort_order, enabled)
 (160000,  '160,000 组合', '分布式存储芯片挖矿＋手机挖矿＋黄金钻石项链＋多肽', 100000, 100, 1)
 ON DUPLICATE KEY UPDATE title = VALUES(title), goods_desc = VALUES(goods_desc),
     daily_cap = VALUES(daily_cap), sort_order = VALUES(sort_order), enabled = VALUES(enabled);
+
+INSERT IGNORE INTO packages (amount, title, goods_desc, daily_cap, release_days, sort_order, enabled, image)
+SELECT amount, title, goods_desc, daily_cap, 600, sort_order, enabled, image
+FROM (SELECT amount, title, goods_desc, daily_cap, sort_order, enabled, image FROM packages WHERE release_days = 300) src;
+
+INSERT IGNORE INTO packages (amount, title, goods_desc, daily_cap, release_days, sort_order, enabled, image)
+SELECT amount, title, goods_desc, daily_cap, 750, sort_order, enabled, image
+FROM (SELECT amount, title, goods_desc, daily_cap, sort_order, enabled, image FROM packages WHERE release_days = 300) src;
 
 CREATE TABLE IF NOT EXISTS orders (
     id              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -150,12 +159,16 @@ CREATE TABLE IF NOT EXISTS business_configs (
 INSERT INTO business_configs (config_key, name, value, sort_order) VALUES
 ('direct_rate', '直推奖励比例', '0.10', 10),
 ('match_rate', '对碰奖励比例', '0.10', 20),
-('manage_rate', '三代管理奖励比例', '0.30', 30),
-('min_withdraw_amount', '最低提现金额', '10', 40),
+('manage_rate', '管理奖励总池比例', '0.30', 30),
+('manage_generations', '管理奖代数', '3', 31),
+('min_withdraw_amount', 'USDT最低提现金额', '10', 40),
+('min_withdraw_amount_ispay', 'ISPAY最低提现金额', '0', 41),
 ('withdraw_fee_rate', 'USDT提现手续费比例', '0.10', 45),
 ('withdraw_daily_limit', 'USDT每日提现上限', '1000', 46),
 ('withdraw_daily_limit_ispay', 'ISPAY每日提现上限', '1000', 47),
-('ispay_price', '测试 ispay 现价（U）', '2000', 50)
+('withdraw_fee_rate_ispay', 'ISPAY提现手续费比例', '0', 48),
+('ispay_price', '测试 ispay 现价（U）', '2000', 50),
+('overflow_clear_hours', '冻结清除时间（小时）', '72', 60)
 ON DUPLICATE KEY UPDATE name = VALUES(name), value = VALUES(value), sort_order = VALUES(sort_order);
 
 -- 日结防重（金牛口径：上海自然日唯一占位）
@@ -205,6 +218,35 @@ CREATE TABLE IF NOT EXISTS match_order_applied (
     settle_date DATE            NOT NULL,
     created_at  DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     CONSTRAINT fk_match_applied_order FOREIGN KEY (order_id) REFERENCES orders (id)
+) ENGINE=InnoDB DEFAULT CHARSET utf8mb4;
+
+-- 当日动态奖已计入封顶的产值（上海自然日）
+CREATE TABLE IF NOT EXISTS user_daily_dynamic (
+    user_id     BIGINT UNSIGNED NOT NULL,
+    settle_date DATE            NOT NULL,
+    used        DECIMAL(36, 8)  NOT NULL DEFAULT 0 COMMENT 'today dynamic USDT-value under cap',
+    PRIMARY KEY (user_id, settle_date),
+    CONSTRAINT fk_daily_dynamic_user FOREIGN KEY (user_id) REFERENCES users (id)
+) ENGINE=InnoDB DEFAULT CHARSET utf8mb4;
+
+-- 超过当日动态封顶的冻结；次日 0:00 封账，再过 overflow_clear_hours 小时清除（默认 72）
+CREATE TABLE IF NOT EXISTS cap_overflow_holds (
+    id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    user_id      BIGINT UNSIGNED NOT NULL,
+    value        DECIMAL(36, 8)  NOT NULL COMMENT 'USDT-value before U/ispay split',
+    usdt         DECIMAL(36, 8)  NOT NULL,
+    ispay        DECIMAL(36, 8)  NOT NULL,
+    source_type  VARCHAR(32)     NOT NULL COMMENT 'direct|match|manage|static|inactive|admin',
+    order_id     BIGINT UNSIGNED NULL,
+    settle_date  DATE            NOT NULL,
+    remark       VARCHAR(255)    NOT NULL DEFAULT '',
+    created_at   DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    expires_at   DATETIME(3)     NULL COMMENT 'set at next 00:00 packaging; settle_date + 4 days',
+    released_at  DATETIME(3)     NULL COMMENT 'unlocked by buying an order (package daily_cap FIFO)',
+    burned_at    DATETIME(3)     NULL COMMENT 'cleared at packaged expiry, no available credit',
+    KEY idx_overflow_user (user_id),
+    KEY idx_overflow_expire (expires_at, burned_at, released_at),
+    CONSTRAINT fk_overflow_user FOREIGN KEY (user_id) REFERENCES users (id)
 ) ENGINE=InnoDB DEFAULT CHARSET utf8mb4;
 
 -- 链上扫块游标

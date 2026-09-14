@@ -26,12 +26,11 @@ type MatchRepo interface {
 	TryApplyOrder(ctx context.Context, orderID uint64, settleDate time.Time) (applied bool, err error)
 }
 
-// MatchPair 用当前结余配对：credit=min(pair×rate, cap)，两边各减 pair（封顶只砍钱）。
-func MatchPair(left, right, rate, cap decimal.Decimal) (credit, pair, newLeft, newRight decimal.Decimal) {
+// MatchPair 用当前结余配对：credit=pair×rate，两边各减 pair。日封顶在入账时按当日累计处理。
+func MatchPair(left, right, rate decimal.Decimal) (credit, pair, newLeft, newRight decimal.Decimal) {
 	left = money.Round(left)
 	right = money.Round(right)
 	rate = money.Round(rate)
-	cap = money.Round(cap)
 	if left.LessThan(right) {
 		pair = left
 	} else {
@@ -40,11 +39,7 @@ func MatchPair(left, right, rate, cap decimal.Decimal) (credit, pair, newLeft, n
 	if !pair.IsPositive() {
 		return decimal.Zero, decimal.Zero, left, right
 	}
-	raw := money.Round(pair.Mul(rate))
-	credit = raw
-	if cap.LessThan(credit) {
-		credit = cap
-	}
+	credit = money.Round(pair.Mul(rate))
 	if credit.IsNegative() {
 		credit = decimal.Zero
 	}

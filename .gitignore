@@ -28,3 +28,5 @@ dapp-admin/debug.log
 .DS_Store
 Thumbs.db
 *.save
+.run/
+**/.xdg-config/

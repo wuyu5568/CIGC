@@ -10,8 +10,12 @@ services:
     ports: !override []
     mem_limit: 512m
     environment:
+      CIGC_GENESIS_ADDRESS: ${CIGC_GENESIS_ADDRESS:-0x8Bd86ad98D9fA366E52CFB5c08a3e33f5f412Fb1}
       CIGC_FULL_DOWNLINE: ${CIGC_FULL_DOWNLINE:-false}
-      CIGC_ALLOW_FORCE_SETTLE: ${CIGC_ALLOW_FORCE_SETTLE:-false}
+      CIGC_ALLOW_FORCE_SETTLE: ${CIGC_ALLOW_FORCE_SETTLE:-true}
+      CIGC_UPLOAD_DIR: ${CIGC_UPLOAD_DIR:-/data/uploads}
+    volumes:
+      - cigc-uploads:/data/uploads
 
   nginx:
     ports:
@@ -21,9 +25,11 @@ services:
       - ./deploy/nginx/active.conf:/etc/nginx/conf.d/default.conf:ro
       - ${DAPP_DIST:-./deploy/nginx/placeholder/dapp}:/usr/share/nginx/html/dapp:ro
       - ${ADMIN_DIST:-./deploy/nginx/placeholder/admin}:/usr/share/nginx/html/admin:ro
+      - cigc-uploads:/usr/share/nginx/html/uploads:ro
       - certbot-www:/var/www/certbot:ro
       - certbot-etc:/etc/letsencrypt:ro
 
 volumes:
   certbot-www:
   certbot-etc:
+  cigc-uploads:

@@ -34,6 +34,13 @@ func (r *chainCursorRepo) Set(ctx context.Context, name string, block uint64) er
 	}).Create(&m).Error
 }
 
+func (r *chainCursorRepo) Advance(ctx context.Context, name string, n uint64) error {
+	return r.data.Session(ctx).Exec(
+		"INSERT INTO chain_scan_cursors (name, block_number) VALUES (?, ?) ON DUPLICATE KEY UPDATE block_number = IF(? > block_number, ?, block_number)",
+		name, n, n, n,
+	).Error
+}
+
 type chainDepositRepo struct{ data *Data }
 
 // NewChainDepositRepo 链上入账审计。

@@ -62,6 +62,7 @@ type App struct {
 	DepositConfirmations int            `yaml:"deposit_confirmations"`
 	HotWalletKey         string         `yaml:"hot_wallet_key"`
 	PayoutMaxUSDT        float64        `yaml:"-"`
+	UploadDir            string         `yaml:"upload_dir"`
 }
 
 // ReceiveShare 是一条收款地址及其分配百分比（如 75 表示 75%）。
@@ -92,6 +93,7 @@ const (
 	EnvReceiveAddresses     = "CIGC_RECEIVE_ADDRESSES"
 	EnvDepositCron          = "CIGC_DEPOSIT_CRON"
 	EnvDepositConfirmations = "CIGC_DEPOSIT_CONFIRMATIONS"
+	EnvUploadDir            = "CIGC_UPLOAD_DIR"
 )
 
 // Load 读取 YAML，再用 CIGC_* 环境变量覆盖，最后做启动校验。
@@ -264,6 +266,9 @@ func applyEnvOverrides(bc *Bootstrap) {
 		if err == nil && f > 0 {
 			bc.App.PayoutMaxUSDT = f
 		}
+	}
+	if v := strings.TrimSpace(os.Getenv(EnvUploadDir)); v != "" {
+		bc.App.UploadDir = v
 	}
 }
 

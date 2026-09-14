@@ -103,6 +103,7 @@ func TestSettle_InactiveCreditThenActivate(t *testing.T) {
 	ouc := NewOrderUseCase(&memPackages{rows: []*Package{{
 		ID: 1, Amount: decimal.RequireFromString("1000"), DailyCap: decimal.RequireFromString("600"), Title: "t", Enabled: true,
 	}}}, orders, users, users, led)
+	ouc.SetPaidHook(uc)
 	o, err := ouc.CreateOrder(context.Background(), inv.ID, decimal.RequireFromString("1000"), 300)
 	if err != nil {
 		t.Fatal(err)
@@ -157,7 +158,7 @@ func TestReleaseInactiveLock_CappedByOrder(t *testing.T) {
 	}
 }
 
-func TestSettle_DailyUnlocksRemainingLock(t *testing.T) {
+func TestSettle_InactiveLockFollowsOverflowOnFirstPay(t *testing.T) {
 	users := newMemUsers()
 	u, err := users.Create(context.Background(), &User{Address: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"})
 	if err != nil {
@@ -172,7 +173,9 @@ func TestSettle_DailyUnlocksRemainingLock(t *testing.T) {
 	orders := newMemOrders(users)
 	led := &memLedger{}
 	pkgs := &memPackages{rows: seedCapPackages()}
+	uc := newSettleUCFull(users, pkgs, &memSettleRuns{}, orders, led, &memConfigs{min: "10"}, true, shanghaiNoon("2026-09-11"))
 	ouc := NewOrderUseCase(pkgs, orders, users, users, led)
+	ouc.SetPaidHook(uc)
 	o, err := ouc.CreateOrder(context.Background(), u.ID, decimal.RequireFromString("1000"), 300)
 	if err != nil {
 		t.Fatal(err)
@@ -184,11 +187,14 @@ func TestSettle_DailyUnlocksRemainingLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.AvailableBalance.Equal(decimal.RequireFromString("600")) || !got.LockBalance.Equal(decimal.RequireFromString("1400")) {
+	if !got.AvailableBalance.Equal(decimal.RequireFromString("200")) || !got.LockBalance.Equal(decimal.RequireFromString("1800")) {
 		t.Fatalf("after pay avail=%s lock=%s", got.AvailableBalance, got.LockBalance)
 	}
+	if !got.IspayBalance.Equal(decimal.RequireFromString("0.2")) || !got.LockIspay.Equal(decimal.RequireFromString("1.8")) {
+		t.Fatalf("after pay ispay=%s lock_ispay=%s", got.IspayBalance, got.LockIspay)
+	}
 
-	uc := newSettleUCFull(users, pkgs, &memSettleRuns{}, orders, led, &memConfigs{min: "10"}, true, shanghaiNoon("2026-09-12"))
+	uc.now = func() time.Time { return shanghaiNoon("2026-09-12") }
 	if _, err := uc.Run(context.Background(), false); err != nil {
 		t.Fatal(err)
 	}
@@ -196,34 +202,90 @@ func TestSettle_DailyUnlocksRemainingLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.AvailableBalance.Equal(decimal.RequireFromString("1200")) || !got.LockBalance.Equal(decimal.RequireFromString("800")) {
-		t.Fatalf("day2 avail=%s lock=%s", got.AvailableBalance, got.LockBalance)
+	if !got.LockBalance.Equal(decimal.RequireFromString("1800")) {
+		t.Fatalf("daily settle must skip inactive freeze, lock=%s", got.LockBalance)
 	}
-	if !got.IspayBalance.Equal(decimal.RequireFromString("1.2")) || !got.LockIspay.Equal(decimal.RequireFromString("0.8")) {
-		t.Fatalf("day2 ispay=%s lock_ispay=%s", got.IspayBalance, got.LockIspay)
+	if !got.AvailableBalance.Equal(decimal.RequireFromString("200")) {
+		t.Fatalf("daily settle must not credit leftover, avail=%s", got.AvailableBalance)
 	}
 
-	uc.now = func() time.Time { return shanghaiNoon("2026-09-13") }
-	if _, err := uc.Run(context.Background(), false); err != nil {
-		t.Fatal(err)
-	}
-	got, err = users.FindByID(context.Background(), u.ID)
+	uc.now = func() time.Time { return shanghaiStart("2026-09-15") }
+	n, err := uc.ExpireCapOverflow(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.LockBalance.Equal(decimal.RequireFromString("200")) {
-		t.Fatalf("day3 lock=%s", got.LockBalance)
-	}
-
-	if _, err := uc.Run(context.Background(), true); err != nil {
-		t.Fatal(err)
+	if n != 1 {
+		t.Fatalf("burned=%d", n)
 	}
 	got, err = users.FindByID(context.Background(), u.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !got.LockBalance.IsZero() {
-		t.Fatalf("next-day force should unlock remaining, lock=%s", got.LockBalance)
+		t.Fatalf("after 72h lock=%s", got.LockBalance)
+	}
+	if !got.AvailableBalance.Equal(decimal.RequireFromString("200")) {
+		t.Fatalf("clear must not credit available, avail=%s", got.AvailableBalance)
+	}
+}
+
+func TestAdjust_LockFollowsOverflow72h(t *testing.T) {
+	users := newMemUsers()
+	u, err := users.Create(context.Background(), &User{
+		Address:      "0xdddddddddddddddddddddddddddddddddddddddd",
+		PaidAmount:   decimal.RequireFromString("1000"),
+		CapEffective: decimal.RequireFromString("600"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	orders := newMemOrders(users)
+	mustPay(t, orders, u.ID, "1000", "2026-09-13")
+	led := &memLedger{}
+	now := shanghaiNoon("2026-09-11")
+	uc := newSettleUCFull(users, &memPackages{rows: seedCapPackages()}, &memSettleRuns{}, orders, led, &memConfigs{min: "10"}, true, now)
+	adj := NewAdjustUseCase(users, users, led, NopTx{}, uc.daily)
+	adj.now = func() time.Time { return now }
+	if _, err := adj.Adjust(context.Background(), u.Address, AdjustLock, decimal.RequireFromString("2000")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := users.FindByID(context.Background(), u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.LockBalance.Equal(decimal.RequireFromString("2000")) {
+		t.Fatalf("lock=%s", got.LockBalance)
+	}
+
+	uc.now = func() time.Time { return shanghaiNoon("2026-09-12") }
+	if _, err := uc.Run(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	got, err = users.FindByID(context.Background(), u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.LockBalance.Equal(decimal.RequireFromString("2000")) || !got.AvailableBalance.IsZero() {
+		t.Fatalf("daily settle must skip admin lock, lock=%s avail=%s", got.LockBalance, got.AvailableBalance)
+	}
+
+	uc.now = func() time.Time { return shanghaiStart("2026-09-15") }
+	n, err := uc.ExpireCapOverflow(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("burned=%d", n)
+	}
+	got, err = users.FindByID(context.Background(), u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.LockBalance.IsZero() {
+		t.Fatalf("after 72h lock=%s", got.LockBalance)
+	}
+	if !got.AvailableBalance.IsZero() {
+		t.Fatalf("clear must not credit available, avail=%s", got.AvailableBalance)
 	}
 }
 

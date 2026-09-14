@@ -35,6 +35,7 @@ func newApp(*conf.Bootstrap, *data.Data, *slog.Logger) (*kratos.App, func(), err
 		data.NewUserBalanceRepo,
 		data.NewPlacementRepo,
 		data.NewMatchRepo,
+		data.NewDailyCapRepo,
 		data.NewChainCursorRepo,
 		data.NewChainDepositRepo,
 		data.NewChainReader,

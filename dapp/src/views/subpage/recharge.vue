@@ -55,6 +55,7 @@
 import userPerson from "@/pinia/person";
 import { useRouter, useRoute } from 'vue-router'
 import { Contract, ETH } from "@/tools/contract";
+import { resolveBuyAddress } from "@/tools/buySomething";
 import { ref, computed } from 'vue'
 import request from "@/tools/request";
 import { showLoadingToast, closeToast, showFailToast, showDialog, closeDialog, showSuccessToast } from "vant";
@@ -65,7 +66,8 @@ import lang from '@/i18n/index'
 import { displayAmount } from '@/tools/amount'
 
 const USDT = new Contract(import.meta.env.VITE_USDT, "ERC20");
-const BUY = new Contract(import.meta.env.VITE_BUY, "BUY");
+const buyAddr = () => resolveBuyAddress()
+const BUY = () => new Contract(buyAddr(), "BUY");
 const route = useRoute()
 
 const router = useRouter()
@@ -80,7 +82,7 @@ const usdtApproved = $ref(false);
 
 /* 获取授权 */
 const getUsdtApproved = async () => {
-    let res = await USDT.call("allowance", [ETH.account, BUY.address]);
+    let res = await USDT.call("allowance", [ETH.account, buyAddr()]);
     console.log('getUsdtApproved', Number(res))
     usdtApproved = Number(res) > 0;
     closeToast()
@@ -95,7 +97,7 @@ const usdtApprove = async () => {
         }
     });
     await USDT.send("approve", [
-        BUY.address,
+        BUY().address,
         "115792089237316195423570985008687907853269984665640564039457584007913129639935"
     ]).then(getUsdtApproved).catch(() => closeToast());
 }

@@ -33,9 +33,12 @@ func (m *memPackages) ListAll(_ context.Context) ([]*Package, error) {
 	return out, nil
 }
 
-func (m *memPackages) FindByAmount(_ context.Context, amount decimal.Decimal) (*Package, error) {
+func (m *memPackages) FindByAmount(_ context.Context, amount decimal.Decimal, days int) (*Package, error) {
+	if !ValidReleaseDays(days) {
+		days = ReleaseDays300
+	}
 	for _, p := range m.rows {
-		if p.Amount.Equal(amount) {
+		if p.Amount.Equal(amount) && PackageReleaseDays(p) == days {
 			cp := *p
 			return &cp, nil
 		}
@@ -67,7 +70,7 @@ func (m *memPackages) Update(_ context.Context, p *Package) (*Package, error) {
 
 func (m *memPackages) Create(_ context.Context, p *Package) (*Package, error) {
 	for _, row := range m.rows {
-		if row.Amount.Equal(p.Amount) {
+		if row.Amount.Equal(p.Amount) && PackageReleaseDays(row) == PackageReleaseDays(p) {
 			return nil, ErrPackageAmountTaken
 		}
 	}
@@ -270,6 +273,29 @@ func (m *memOrders) ListPaidBetween(_ context.Context, from, to time.Time) ([]*O
 		out = append(out, &cp)
 	}
 	return out, nil
+}
+
+func TestFilterPackagesByDays(t *testing.T) {
+	pkgs := []*Package{
+		{ID: 1, Title: "a", ReleaseDays: 300},
+		{ID: 2, Title: "b", ReleaseDays: 600},
+		{ID: 3, Title: "c", ReleaseDays: 750},
+		{ID: 4, Title: "d", ReleaseDays: 0},
+	}
+	if n := FilterPackagesByDays(pkgs, 0); len(n) != 4 {
+		t.Fatalf("all=%d", len(n))
+	}
+	got := FilterPackagesByDays(pkgs, 300)
+	if len(got) != 2 || got[0].ID != 1 || got[1].ID != 4 {
+		t.Fatalf("300=%+v", got)
+	}
+	got = FilterPackagesByDays(pkgs, 600)
+	if len(got) != 1 || got[0].ID != 2 {
+		t.Fatalf("600=%+v", got)
+	}
+	if n := FilterPackagesByDays(pkgs, 750); len(n) != 1 || n[0].ID != 3 {
+		t.Fatalf("750=%+v", n)
+	}
 }
 
 func TestCreateOrder_AndMarkPaid(t *testing.T) {

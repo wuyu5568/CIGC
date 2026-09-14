@@ -20,6 +20,22 @@ func NormalizeOrEmpty(addr string) string {
 	return a
 }
 
+// NormalizeInviteCode 规范化推荐码（邀请人钱包）。允许省略 0x 的 40 hex，并去掉零宽字符。
+func NormalizeInviteCode(addr string) string {
+	addr = strings.TrimSpace(addr)
+	addr = strings.ReplaceAll(addr, "\u200b", "")
+	addr = strings.ReplaceAll(addr, "\ufeff", "")
+	addr = strings.ReplaceAll(addr, "\u00a0", "")
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return ""
+	}
+	if !strings.HasPrefix(addr, "0x") && !strings.HasPrefix(addr, "0X") && len(addr) == 40 {
+		addr = "0x" + addr
+	}
+	return NormalizeOrEmpty(addr)
+}
+
 // NormalizeReceiveAddress 收款地址按原文保留：0x + hex 小写，不补位。
 func NormalizeReceiveAddress(addr string) string {
 	if a := NormalizeOrEmpty(addr); a != "" {

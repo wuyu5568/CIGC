@@ -1,6 +1,7 @@
 FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata wget
 COPY deploy/out/app /usr/local/bin/app
+COPY deploy/out/settle /usr/local/bin/settle
 COPY configs /app/configs
 WORKDIR /app
 ENV TZ=Asia/Shanghai

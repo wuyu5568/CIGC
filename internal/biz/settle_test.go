@@ -108,6 +108,21 @@ func (m *memSettleRuns) Upsert(_ context.Context, run *SettleRun) error {
 	return nil
 }
 
+func (m *memSettleRuns) DeleteAfter(_ context.Context, after time.Time) (int, error) {
+	if m.byDate == nil {
+		return 0, nil
+	}
+	cutoff := m.key(after)
+	n := 0
+	for k := range m.byDate {
+		if k > cutoff {
+			delete(m.byDate, k)
+			n++
+		}
+	}
+	return n, nil
+}
+
 func shanghaiNoon(day string) time.Time {
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	if err != nil {
@@ -125,7 +140,7 @@ func newSettleUC(users *memUsers, pkgs *memPackages, runs *memSettleRuns, allowF
 }
 
 func newSettleUCFull(users *memUsers, pkgs *memPackages, runs *memSettleRuns, orders *memOrders, led *memLedger, cfg *memConfigs, allowForce bool, now time.Time) *SettleUseCase {
-	uc := NewSettleUseCase(users, pkgs, runs, orders, users, led, cfg, nil, nil, NopTx{}, &conf.App{
+	uc := NewSettleUseCase(users, pkgs, runs, orders, users, led, cfg, nil, nil, nil, NopTx{}, &conf.App{
 		SettleTimezone:   "Asia/Shanghai",
 		AllowForceSettle: allowForce,
 	})
@@ -280,6 +295,58 @@ func TestSettle_ForceRerun(t *testing.T) {
 	}
 	if !got.CapEffective.Equal(decimal.RequireFromString("1800")) {
 		t.Fatalf("force cap=%s", got.CapEffective)
+	}
+}
+
+func TestSettle_ResetTestDay(t *testing.T) {
+	users := newMemUsers()
+	u, err := users.Create(context.Background(), &User{Address: "0xreset"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	orders := newMemOrders(users)
+	mustPay(t, orders, u.ID, "1000", "2026-09-10")
+	uc := newSettleUCFull(users, &memPackages{rows: seedCapPackages()}, &memSettleRuns{}, orders, &memLedger{}, &memConfigs{min: "10"}, true, shanghaiNoon("2026-09-11"))
+	if _, err := uc.Run(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := uc.Run(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := uc.Run(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	st, err := uc.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.NextTestDate != "2026-09-14" {
+		t.Fatalf("next=%s", st.NextTestDate)
+	}
+	reset, err := uc.ResetTestDay(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reset.TodayDate != "2026-09-11" || reset.Deleted != 2 || reset.NextTestDate != "2026-09-12" {
+		t.Fatalf("%+v", reset)
+	}
+	st, err = uc.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.NextTestDate != "2026-09-12" {
+		t.Fatalf("after reset next=%s", st.NextTestDate)
+	}
+	if !st.TodaySettled {
+		t.Fatal("today settle must remain")
+	}
+}
+
+func TestSettle_ResetTestDayDisabled(t *testing.T) {
+	uc := newSettleUC(newMemUsers(), &memPackages{}, &memSettleRuns{}, false, shanghaiNoon("2026-09-11"))
+	_, err := uc.ResetTestDay(context.Background())
+	if !errors.Is(err, ErrForceSettleDisabled) {
+		t.Fatalf("err=%v", err)
 	}
 }
 
@@ -456,7 +523,14 @@ func (m *memMatch) TryApplyOrder(_ context.Context, orderID uint64, _ time.Time)
 }
 
 func newSettleUCMatch(users *memUsers, pkgs *memPackages, runs *memSettleRuns, orders *memOrders, led *memLedger, place *memPlacements, matches *memMatch, allowForce bool, now time.Time) *SettleUseCase {
-	uc := NewSettleUseCase(users, pkgs, runs, orders, users, led, &memConfigs{}, place, matches, NopTx{}, &conf.App{
+	return newSettleUCMatchCfg(users, pkgs, runs, orders, led, place, matches, &memConfigs{}, allowForce, now)
+}
+
+func newSettleUCMatchCfg(users *memUsers, pkgs *memPackages, runs *memSettleRuns, orders *memOrders, led *memLedger, place *memPlacements, matches *memMatch, cfg *memConfigs, allowForce bool, now time.Time) *SettleUseCase {
+	if cfg == nil {
+		cfg = &memConfigs{}
+	}
+	uc := NewSettleUseCase(users, pkgs, runs, orders, users, led, cfg, place, matches, nil, NopTx{}, &conf.App{
 		SettleTimezone:   "Asia/Shanghai",
 		AllowForceSettle: allowForce,
 	})
@@ -483,7 +557,6 @@ func TestMatchPair(t *testing.T) {
 		decimal.RequireFromString("1000"),
 		decimal.RequireFromString("400"),
 		decimal.RequireFromString("0.10"),
-		decimal.RequireFromString("600"),
 	)
 	if !pair.Equal(decimal.RequireFromString("400")) || !credit.Equal(decimal.RequireFromString("40")) {
 		t.Fatalf("credit=%s pair=%s", credit, pair)
@@ -495,13 +568,12 @@ func TestMatchPair(t *testing.T) {
 		decimal.RequireFromString("1000"),
 		decimal.RequireFromString("1000"),
 		decimal.RequireFromString("0.10"),
-		decimal.RequireFromString("50"),
 	)
-	if !pair.Equal(decimal.RequireFromString("1000")) || !credit.Equal(decimal.RequireFromString("50")) {
-		t.Fatalf("capped credit=%s pair=%s", credit, pair)
+	if !pair.Equal(decimal.RequireFromString("1000")) || !credit.Equal(decimal.RequireFromString("100")) {
+		t.Fatalf("credit=%s pair=%s", credit, pair)
 	}
 	if !l.IsZero() || !r.IsZero() {
-		t.Fatalf("cap still consumes pair L=%s R=%s", l, r)
+		t.Fatalf("pair consume L=%s R=%s", l, r)
 	}
 }
 
@@ -665,7 +737,7 @@ func TestSettle_MatchNestedAndCarryNextDay(t *testing.T) {
 	}
 }
 
-func TestSettle_MatchCapCutsPayoutKeepsPairBurn(t *testing.T) {
+func TestSettle_ZeroCapOverflowKeepsPairBurn(t *testing.T) {
 	users := newMemUsers()
 	a, err := users.Create(context.Background(), &User{
 		Address: "0xa", CapEffective: decimal.Zero,
@@ -699,8 +771,8 @@ func TestSettle_MatchCapCutsPayoutKeepsPairBurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.MatchCount != 0 {
-		t.Fatalf("credit=0 should not count match, got %d", res.MatchCount)
+	if res.MatchCount != 1 {
+		t.Fatalf("overflow still counts match, got %d", res.MatchCount)
 	}
 	got, err := users.FindByID(context.Background(), a.ID)
 	if err != nil {
@@ -708,6 +780,9 @@ func TestSettle_MatchCapCutsPayoutKeepsPairBurn(t *testing.T) {
 	}
 	if !got.AvailableBalance.IsZero() {
 		t.Fatalf("bal=%s", got.AvailableBalance)
+	}
+	if !got.LockBalance.Equal(decimal.RequireFromString("50")) {
+		t.Fatalf("overflow lock=%s", got.LockBalance)
 	}
 	bal, _ := matches.Get(context.Background(), a.ID)
 	if !bal.LeftRemain.IsZero() || !bal.RightRemain.IsZero() {
@@ -767,16 +842,24 @@ func TestSettle_NoDirectWithoutInviter(t *testing.T) {
 }
 
 func TestManageShares(t *testing.T) {
-	s := ManageShares(decimal.RequireFromString("12"))
-	if !s[0].Equal(decimal.RequireFromString("4")) || !s[1].Equal(decimal.RequireFromString("4")) || !s[2].Equal(decimal.RequireFromString("4")) {
+	s := ManageShares(decimal.RequireFromString("12"), 3)
+	if len(s) != 3 || !s[0].Equal(decimal.RequireFromString("4")) || !s[1].Equal(decimal.RequireFromString("4")) || !s[2].Equal(decimal.RequireFromString("4")) {
 		t.Fatalf("%v", s)
 	}
-	s = ManageShares(decimal.RequireFromString("10"))
+	s = ManageShares(decimal.RequireFromString("10"), 3)
 	if !s[0].Add(s[1]).Add(s[2]).Equal(decimal.RequireFromString("10")) {
 		t.Fatalf("sum=%s", s[0].Add(s[1]).Add(s[2]))
 	}
 	if s[0].LessThan(s[1]) {
 		t.Fatalf("remainder should go to gen1: %v", s)
+	}
+	one := ManageShares(decimal.RequireFromString("10"), 1)
+	if len(one) != 1 || !one[0].Equal(decimal.RequireFromString("10")) {
+		t.Fatalf("n=1 %v", one)
+	}
+	two := ManageShares(decimal.RequireFromString("10"), 2)
+	if len(two) != 2 || !two[0].Add(two[1]).Equal(decimal.RequireFromString("10")) {
+		t.Fatalf("n=2 %v", two)
 	}
 }
 
@@ -864,6 +947,50 @@ func TestSettle_PaysManageFromMatch(t *testing.T) {
 	}
 	if !got.AvailableBalance.Equal(decimal.RequireFromString("2")) {
 		t.Fatalf("after force avail=%s", got.AvailableBalance)
+	}
+}
+
+func TestSettle_ManageGensFromConfig(t *testing.T) {
+	users := newMemUsers()
+	i3, err := users.Create(context.Background(), &User{Address: "0xi3g"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	i2, err := users.Create(context.Background(), &User{Address: "0xi2g", InviterID: &i3.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	i1, err := users.Create(context.Background(), &User{Address: "0xi1g", InviterID: &i2.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := users.Create(context.Background(), &User{
+		Address: "0xug", InviterID: &i1.ID, CapEffective: decimal.RequireFromString("600"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	place, orders := setupMatchTree(t, users, u)
+	mustPay(t, orders, i1.ID, "1000", "2026-09-10")
+	mustPay(t, orders, i2.ID, "1000", "2026-09-10")
+	mustPay(t, orders, i3.ID, "1000", "2026-09-10")
+	led := &memLedger{}
+	uc := newSettleUCMatchCfg(users, &memPackages{rows: seedCapPackages()}, &memSettleRuns{}, orders, led, place, newMemMatch(), &memConfigs{manageGens: "2"}, true, shanghaiNoon("2026-09-11"))
+	res, err := uc.Run(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.MatchCount != 1 || res.ManageCount != 2 {
+		t.Fatalf("match=%d manage=%d", res.MatchCount, res.ManageCount)
+	}
+	g1, _ := users.FindByID(context.Background(), i1.ID)
+	g2, _ := users.FindByID(context.Background(), i2.ID)
+	g3, _ := users.FindByID(context.Background(), i3.ID)
+	if !g1.AvailableBalance.Equal(decimal.RequireFromString("3")) || !g2.AvailableBalance.Equal(decimal.RequireFromString("3")) {
+		t.Fatalf("gen1=%s gen2=%s", g1.AvailableBalance, g2.AvailableBalance)
+	}
+	if !g3.AvailableBalance.IsZero() {
+		t.Fatalf("gen3 should be skipped, avail=%s", g3.AvailableBalance)
 	}
 }
 

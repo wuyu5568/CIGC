@@ -25,6 +25,8 @@ const (
 	defaultConfirmations = 12
 	defaultUSDTDecimals  = 18
 	maxDepositScanBlocks = 2000
+	maxBuyScanBatch      = 50
+	buyEventPrefix       = "buy:"
 )
 
 // ChainTransfer 是一笔已确认的 ERC20 Transfer。
@@ -35,6 +37,13 @@ type ChainTransfer struct {
 	To          string
 	AmountRaw   string // 链上整数金额（十进制或 0x 十六进制）
 	BlockNumber uint64
+}
+
+// ChainBuy 是 BuySomething.users[i] / usersAmount[i] 的一条待入账记录。
+type ChainBuy struct {
+	Index  uint64
+	User   string
+	Amount *big.Int // 合约存的是整数 USDT（buy 的 num），不是 wei
 }
 
 // ChainDeposit 扫链入账审计行。
@@ -52,16 +61,19 @@ type ChainDeposit struct {
 	CreatedAt   time.Time
 }
 
-// ChainReader 读链上日志与块高。
+// ChainReader 读链上日志、块高，以及 BuySomething 待处理数组。
 type ChainReader interface {
 	BlockNumber(ctx context.Context) (uint64, error)
 	ListTransfers(ctx context.Context, token, to string, fromBlock, toBlock uint64) ([]*ChainTransfer, error)
+	BuyLength(ctx context.Context, contract string, atBlock uint64) (uint64, error)
+	ListBuys(ctx context.Context, contract string, start, end, atBlock uint64) ([]*ChainBuy, error)
 }
 
-// ChainCursorRepo 扫块游标。
+// ChainCursorRepo 扫块/买记录游标。
 type ChainCursorRepo interface {
 	Get(ctx context.Context, name string) (uint64, error)
 	Set(ctx context.Context, name string, block uint64) error
+	Advance(ctx context.Context, name string, n uint64) error
 }
 
 // ChainDepositRepo 入账事件防重与审计。
@@ -82,9 +94,13 @@ type DepositPage struct {
 // DepositScanResult 一次扫链摘要。
 type DepositScanResult struct {
 	Skipped     bool
+	Mode        string
 	FromBlock   uint64
 	ToBlock     uint64
 	HeadBlock   uint64
+	FromIndex   uint64
+	ToIndex     uint64
+	Length      uint64
 	Seen        int
 	Matched     int
 	Abnormal    int
@@ -104,6 +120,7 @@ type DepositUseCase struct {
 	shares   []ReceiveShare
 	byAddr   map[string]ReceiveShare
 	token    string
+	buy      string
 	confirms int
 	decimals int32
 	now      func() time.Time
@@ -123,10 +140,12 @@ func NewDepositUseCase(
 	ledger LedgerRepo,
 ) *DepositUseCase {
 	token := ""
+	buy := ""
 	confirms := defaultConfirmations
 	var shares []ReceiveShare
 	if app != nil {
 		token = wallet.NormalizeOrEmpty(app.UsdtAddress)
+		buy = wallet.NormalizeOrEmpty(app.BuyContract)
 		if app.DepositConfirmations > 0 {
 			confirms = app.DepositConfirmations
 		}
@@ -153,6 +172,7 @@ func NewDepositUseCase(
 		shares:   shares,
 		byAddr:   receiveSet(shares),
 		token:    token,
+		buy:      buy,
 		confirms: confirms,
 		decimals: defaultUSDTDecimals,
 		now:      time.Now,
@@ -166,9 +186,27 @@ func (uc *DepositUseCase) SetPaidHook(h OrderPaidHook) {
 	}
 }
 
-// Enabled 是否已配置收款地址与合约、RPC 读端。
+// Enabled 是否已配置收款地址与合约、RPC 读端（USDT Transfer 扫链）。
 func (uc *DepositUseCase) Enabled() bool {
 	return uc != nil && len(uc.shares) > 0 && uc.token != "" && uc.chain != nil && uc.deposits != nil && uc.cursors != nil
+}
+
+// BuysEnabled 是否已配置 BuySomething 合约与 RPC，可按索引入账。
+func (uc *DepositUseCase) BuysEnabled() bool {
+	return uc != nil && uc.buy != "" && uc.chain != nil && uc.deposits != nil && uc.cursors != nil && uc.users != nil
+}
+
+// Runnable 定时/一次性任务是否有可跑的入账路径。
+func (uc *DepositUseCase) Runnable() bool {
+	return uc.BuysEnabled() || uc.Enabled()
+}
+
+// Run 优先按 BuySomething 数组入账；未配合约时退回扫 USDT Transfer。
+func (uc *DepositUseCase) Run(ctx context.Context) (*DepositScanResult, error) {
+	if uc.BuysEnabled() {
+		return uc.ScanBuys(ctx)
+	}
+	return uc.Scan(ctx)
 }
 
 // Shares 返回已规范化的收款分配。
@@ -194,7 +232,7 @@ func (uc *DepositUseCase) Scan(ctx context.Context) (*DepositScanResult, error) 
 	uc.mu.Lock()
 	defer uc.mu.Unlock()
 
-	res := &DepositScanResult{}
+	res := &DepositScanResult{Mode: "transfers"}
 	if !uc.Enabled() {
 		res.Skipped = true
 		return res, nil
@@ -261,6 +299,171 @@ func (uc *DepositUseCase) Scan(ctx context.Context) (*DepositScanResult, error) 
 		return res, err
 	}
 	return res, nil
+}
+
+// ScanBuys 在已确认块读取 BuySomething.users / usersAmount，按索引入充值余额。
+func (uc *DepositUseCase) ScanBuys(ctx context.Context) (*DepositScanResult, error) {
+	uc.mu.Lock()
+	defer uc.mu.Unlock()
+
+	res := &DepositScanResult{Mode: "buys"}
+	if !uc.BuysEnabled() {
+		res.Skipped = true
+		return res, nil
+	}
+	head, err := uc.chain.BlockNumber(ctx)
+	if err != nil {
+		return nil, err
+	}
+	res.HeadBlock = head
+	if head <= uint64(uc.confirms) {
+		res.Skipped = true
+		return res, nil
+	}
+	at := head - uint64(uc.confirms)
+	res.FromBlock = at
+	res.ToBlock = at
+
+	length, err := uc.chain.BuyLength(ctx, uc.buy, at)
+	if err != nil {
+		return nil, err
+	}
+	res.Length = length
+	cursorName := buyCursorName(uc.buy)
+	cursor, err := uc.cursors.Get(ctx, cursorName)
+	if err != nil {
+		return nil, err
+	}
+	res.FromIndex = cursor
+	if cursor >= length {
+		res.ToIndex = cursor
+		return res, nil
+	}
+	end := length - 1
+	if end-cursor+1 > maxBuyScanBatch {
+		end = cursor + maxBuyScanBatch - 1
+	}
+	res.ToIndex = end + 1
+	rows, err := uc.chain.ListBuys(ctx, uc.buy, cursor, end, at)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		if row == nil {
+			continue
+		}
+		outcome, err := uc.processBuy(ctx, row, at)
+		if err != nil {
+			return res, err
+		}
+		res.Seen++
+		switch outcome {
+		case DepositMatched:
+			res.Matched++
+		case DepositAbnormal:
+			res.Abnormal++
+		case DepositSkipped:
+			res.AlreadySeen++
+		}
+		if err := uc.cursors.Advance(ctx, cursorName, row.Index+1); err != nil {
+			return res, err
+		}
+	}
+	return res, nil
+}
+
+func buyCursorName(contract string) string {
+	return buyEventPrefix + wallet.NormalizeOrEmpty(contract)
+}
+
+func buyEventID(contract string, index uint64) (string, int) {
+	return buyEventPrefix + wallet.NormalizeOrEmpty(contract), int(index)
+}
+
+func (uc *DepositUseCase) processBuy(ctx context.Context, row *ChainBuy, atBlock uint64) (string, error) {
+	if row == nil {
+		return DepositSkipped, nil
+	}
+	from := wallet.NormalizeOrEmpty(row.User)
+	txHash, logIndex := buyEventID(uc.buy, row.Index)
+	if txHash == "" || from == "" {
+		return DepositSkipped, nil
+	}
+	if existing, err := uc.deposits.FindByEvent(ctx, txHash, logIndex); err != nil {
+		return "", err
+	} else if existing != nil {
+		return DepositSkipped, nil
+	}
+
+	amount := decimal.Zero
+	if row.Amount != nil {
+		amount = money.Round(decimal.NewFromBigInt(row.Amount, 0))
+	}
+	if !amount.IsPositive() {
+		return uc.saveAbnormal(ctx, &ChainTransfer{
+			TxHash: txHash, LogIndex: logIndex, From: from, To: uc.buy, BlockNumber: atBlock,
+		}, txHash, from, uc.buy, amount, fmt.Sprintf("buy index %d invalid amount", row.Index))
+	}
+
+	user, err := uc.users.FindByAddress(ctx, from)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			return uc.saveAbnormal(ctx, &ChainTransfer{
+				TxHash: txHash, LogIndex: logIndex, From: from, To: uc.buy, BlockNumber: atBlock,
+			}, txHash, from, uc.buy, amount, fmt.Sprintf("buy index %d unknown sender", row.Index))
+		}
+		return "", err
+	}
+	if uc.balances == nil {
+		return "", fmt.Errorf("recharge credit: no balance repo")
+	}
+
+	credited := false
+	err = uc.tx.InTx(ctx, func(ctx context.Context) error {
+		if existing, err := uc.deposits.FindByEvent(ctx, txHash, logIndex); err != nil {
+			return err
+		} else if existing != nil {
+			return nil
+		}
+		if err := uc.deposits.Create(ctx, &ChainDeposit{
+			TxHash:      txHash,
+			LogIndex:    logIndex,
+			FromAddr:    from,
+			ToAddr:      uc.buy,
+			Amount:      amount,
+			BlockNumber: atBlock,
+			Status:      DepositMatched,
+			Remark:      fmt.Sprintf("buy index %d", row.Index),
+		}); err != nil {
+			if errors.Is(err, ErrOrderConflict) {
+				return nil
+			}
+			return err
+		}
+		if err := uc.balances.AddRechargeBalance(ctx, user.ID, amount); err != nil {
+			return err
+		}
+		if uc.ledger != nil {
+			if err := uc.ledger.Create(ctx, &LedgerEntry{
+				UserID:      user.ID,
+				EntryType:   LedgerRecharge,
+				Amount:      amount,
+				BalanceKind: BalanceRecharge,
+				Remark:      fmt.Sprintf("buy index %d", row.Index),
+			}); err != nil {
+				return err
+			}
+		}
+		credited = true
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	if !credited {
+		return DepositSkipped, nil
+	}
+	return DepositMatched, nil
 }
 
 // ProcessTransfer 处理单笔（测试与补扫用）。

@@ -13,6 +13,7 @@ import (
 )
 
 const transferSelector = "a9059cbb"
+const balanceOfSelector = "70a08231"
 
 // ParsePrivateKey 解析 0x 可选的 32 字节私钥。
 func ParsePrivateKey(hexKey string) (*secp256k1.PrivateKey, error) {
@@ -78,6 +79,33 @@ func ERC20TransferData(to string, amount *big.Int) ([]byte, error) {
 	copy(out[0:4], sel)
 	copy(out[4+12:4+32], addr)
 	copy(out[4+32+32-len(amt):], amt)
+	return out, nil
+}
+
+func padAddress(addr string) ([]byte, error) {
+	addr = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(addr)), "0x")
+	if len(addr) != 40 {
+		return nil, fmt.Errorf("invalid address")
+	}
+	b, err := hex.DecodeString(addr)
+	if err != nil || len(b) != 20 {
+		return nil, fmt.Errorf("invalid address")
+	}
+	out := make([]byte, 32)
+	copy(out[12:], b)
+	return out, nil
+}
+
+// ERC20BalanceOfData 构造 balanceOf(holder) calldata。
+func ERC20BalanceOfData(holder string) ([]byte, error) {
+	sel, _ := hex.DecodeString(balanceOfSelector)
+	padded, err := padAddress(holder)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]byte, 4+32)
+	copy(out[0:4], sel)
+	copy(out[4:], padded)
 	return out, nil
 }
 

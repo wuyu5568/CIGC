@@ -9,20 +9,28 @@ import (
 )
 
 const maxManageAncestorWalk = 64
-const manageAncestorWant = 3
 
-// ManageShares 把管理奖总池均分三代；余数贴最近一代（下标 0）。
-func ManageShares(pool decimal.Decimal) [3]decimal.Decimal {
+// ManageShares 把管理奖总池均分 n 代；余数贴最近一代（下标 0）。n<1 按 3。
+func ManageShares(pool decimal.Decimal, n int) []decimal.Decimal {
+	if n < 1 {
+		n = defaultManageGens
+	}
+	if n > maxManageGens {
+		n = maxManageGens
+	}
 	pool = money.Round(pool)
+	out := make([]decimal.Decimal, n)
 	if !pool.IsPositive() {
-		return [3]decimal.Decimal{}
+		return out
 	}
-	third := money.Round(pool.Div(decimal.NewFromInt(3)))
-	return [3]decimal.Decimal{
-		money.Round(pool.Sub(third).Sub(third)),
-		third,
-		third,
+	part := money.Round(pool.Div(decimal.NewFromInt(int64(n))))
+	rest := pool
+	for i := n - 1; i >= 1; i-- {
+		out[i] = part
+		rest = money.Round(rest.Sub(part))
 	}
+	out[0] = rest
+	return out
 }
 
 func manageRemark(gen int, sourceUserID uint64, uniq string) string {

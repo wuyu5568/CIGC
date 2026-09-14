@@ -106,6 +106,11 @@ func StaticDaily(amount decimal.Decimal, days int, spot decimal.Decimal) (coins,
 	return
 }
 
+// ValueFromUSDTHalf 半边 U ×2，还原拆分前产值。
+func ValueFromUSDTHalf(usdtHalf decimal.Decimal) decimal.Decimal {
+	return money.Round(usdtHalf.Mul(decimal.NewFromInt(2)))
+}
+
 // OrderStaticRelease 一笔订单的静态释放进度。
 type OrderStaticRelease struct {
 	TodayUSDT      decimal.Decimal

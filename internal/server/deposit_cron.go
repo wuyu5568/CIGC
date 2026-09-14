@@ -18,7 +18,7 @@ type DepositCron struct {
 	deposit  *biz.DepositUseCase
 }
 
-// NewDepositCron 从 app 配置构造；表达式或收款未配则空操作。
+// NewDepositCron 从 app 配置构造；表达式为空或入账未配则空操作。
 func NewDepositCron(app *conf.App, deposit *biz.DepositUseCase) *DepositCron {
 	tz := "Asia/Shanghai"
 	if app != nil && app.SettleTimezone != "" {
@@ -37,12 +37,12 @@ func NewDepositCron(app *conf.App, deposit *biz.DepositUseCase) *DepositCron {
 
 // Start 启动调度。
 func (d *DepositCron) Start() {
-	if d == nil || d.cronExpr == "" || d.deposit == nil || !d.deposit.Enabled() {
+	if d == nil || d.cronExpr == "" || d.deposit == nil || !d.deposit.Runnable() {
 		return
 	}
 	d.c = cron.New(cron.WithLocation(d.loc))
 	_, err := d.c.AddFunc(d.cronExpr, func() {
-		res, err := d.deposit.Scan(context.Background())
+		res, err := d.deposit.Run(context.Background())
 		if err != nil {
 			slog.Error("deposit cron", "err", err)
 			return
@@ -52,8 +52,11 @@ func (d *DepositCron) Start() {
 			return
 		}
 		slog.Info("deposit cron done",
+			"mode", res.Mode,
 			"from", res.FromBlock,
 			"to", res.ToBlock,
+			"from_index", res.FromIndex,
+			"to_index", res.ToIndex,
 			"matched", res.Matched,
 			"abnormal", res.Abnormal,
 		)

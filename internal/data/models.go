@@ -69,6 +69,32 @@ type UserMatchBalanceModel struct {
 
 func (UserMatchBalanceModel) TableName() string { return "user_match_balances" }
 
+type UserDailyDynamicModel struct {
+	UserID     uint64          `gorm:"primaryKey;column:user_id"`
+	SettleDate time.Time       `gorm:"primaryKey;type:date;column:settle_date"`
+	Used       decimal.Decimal `gorm:"type:decimal(36,8)"`
+}
+
+func (UserDailyDynamicModel) TableName() string { return "user_daily_dynamic" }
+
+type CapOverflowHoldModel struct {
+	ID         uint64          `gorm:"primaryKey"`
+	UserID     uint64          `gorm:"column:user_id;index"`
+	Value      decimal.Decimal `gorm:"type:decimal(36,8)"`
+	USDT       decimal.Decimal `gorm:"column:usdt;type:decimal(36,8)"`
+	Ispay      decimal.Decimal `gorm:"type:decimal(36,8)"`
+	SourceType string          `gorm:"column:source_type;size:32"`
+	OrderID    *uint64         `gorm:"column:order_id"`
+	SettleDate time.Time       `gorm:"type:date;column:settle_date"`
+	Remark     string          `gorm:"size:255"`
+	CreatedAt  time.Time
+	ExpiresAt  *time.Time
+	ReleasedAt *time.Time
+	BurnedAt   *time.Time
+}
+
+func (CapOverflowHoldModel) TableName() string { return "cap_overflow_holds" }
+
 type MatchOrderAppliedModel struct {
 	OrderID    uint64 `gorm:"primaryKey"`
 	SettleDate time.Time
@@ -86,6 +112,7 @@ type PackageModel struct {
 	ReleaseDays int             `gorm:"column:release_days"`
 	SortOrder   int             `gorm:"column:sort_order"`
 	Enabled     bool
+	Image       string `gorm:"column:image;size:512"`
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }

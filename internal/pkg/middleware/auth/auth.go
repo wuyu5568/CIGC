@@ -13,6 +13,12 @@ import (
 )
 
 type ctxKey struct{}
+type roleKey struct{}
+
+const (
+	roleUser  = "user"
+	roleAdmin = "admin"
+)
 
 // WithUserID 把用户 ID 写入请求上下文。
 func WithUserID(ctx context.Context, userID uint64) context.Context {
@@ -23,6 +29,16 @@ func WithUserID(ctx context.Context, userID uint64) context.Context {
 func UserIDFromContext(ctx context.Context) (uint64, bool) {
 	v, ok := ctx.Value(ctxKey{}).(uint64)
 	return v, ok
+}
+
+func withRole(ctx context.Context, role string) context.Context {
+	return context.WithValue(ctx, roleKey{}, role)
+}
+
+// IsUser 表示当前请求是用户端 JWT（非管理端）。
+func IsUser(ctx context.Context) bool {
+	v, _ := ctx.Value(roleKey{}).(string)
+	return v == roleUser
 }
 
 func parseBearerUID(tokenStr string, key []byte) (uint64, bool) {
@@ -94,7 +110,38 @@ func RequireJWT(jwtKey string, next http.HandlerFunc) http.HandlerFunc {
 			http.Error(w, `{"message":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
-		next(w, r.WithContext(WithUserID(r.Context(), uid)))
+		next(w, r.WithContext(withRole(WithUserID(r.Context(), uid), roleUser)))
+	}
+}
+
+func unauthorized(w http.ResponseWriter) {
+	http.Error(w, `{"message":"unauthorized"}`, http.StatusUnauthorized)
+}
+
+// RequireAdminOrUserGET 管理端 JWT 放行任意方法；用户 JWT 仅放行 GET。缺失或无效 token 返回 401。
+func RequireAdminOrUserGET(jwtKey string, next http.HandlerFunc) http.HandlerFunc {
+	key := []byte(jwtKey)
+	return func(w http.ResponseWriter, r *http.Request) {
+		authz := r.Header.Get("Authorization")
+		if authz == "" || !strings.HasPrefix(authz, "Bearer ") {
+			unauthorized(w)
+			return
+		}
+		tokenStr := strings.TrimPrefix(authz, "Bearer ")
+		if parseBearerAdmin(tokenStr, key) {
+			next(w, r.WithContext(withRole(r.Context(), roleAdmin)))
+			return
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			unauthorized(w)
+			return
+		}
+		uid, ok := parseBearerUID(tokenStr, key)
+		if !ok {
+			unauthorized(w)
+			return
+		}
+		next(w, r.WithContext(withRole(WithUserID(r.Context(), uid), roleUser)))
 	}
 }
 

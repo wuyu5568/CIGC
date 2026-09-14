@@ -100,6 +100,86 @@ func ZoneVolume(left, right decimal.Decimal) TeamVolume {
 	return v
 }
 
+// AdminTeamStat 管理端会员业绩：安置子树累计认购（不含自己）+ 历史 pair。
+type AdminTeamStat struct {
+	Volume TeamVolume
+	Paired decimal.Decimal
+}
+
+// PairedVolume 已对碰业绩 = 历史 pair 累计：(左区入账+右区入账−左右结余)/2。
+func PairedVolume(leftPaid, rightPaid, leftRemain, rightRemain decimal.Decimal) decimal.Decimal {
+	added := money.Round(leftPaid).Add(money.Round(rightPaid))
+	remain := money.Round(leftRemain).Add(money.Round(rightRemain))
+	paired := money.Round(added.Sub(remain).Div(decimal.NewFromInt(2)))
+	if paired.IsNegative() {
+		return decimal.Zero
+	}
+	return paired
+}
+
+// AdminTeamStats 每人左右直接子整棵子树 paid（含该子本人）、总/大/小区、已对碰 pair。
+func (uc *PlacementUseCase) AdminTeamStats(ctx context.Context) (map[uint64]AdminTeamStat, error) {
+	out := map[uint64]AdminTeamStat{}
+	if uc == nil || uc.users == nil || uc.placements == nil {
+		return out, nil
+	}
+	all, err := uc.users.ListAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	paid, err := uc.subtreePaidMap(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := uc.placements.ListAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	leftChild := map[uint64]uint64{}
+	rightChild := map[uint64]uint64{}
+	for _, p := range rows {
+		if p == nil || p.SponsorID == 0 || p.UserID == 0 {
+			continue
+		}
+		switch p.Side {
+		case SideLeft:
+			leftChild[p.SponsorID] = p.UserID
+		case SideRight:
+			rightChild[p.SponsorID] = p.UserID
+		}
+	}
+	remain := map[uint64]*MatchBalance{}
+	if uc.matches != nil {
+		bals, err := uc.matches.ListAll(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, b := range bals {
+			if b == nil {
+				continue
+			}
+			remain[b.UserID] = b
+		}
+	}
+	for _, u := range all {
+		if u == nil {
+			continue
+		}
+		lp := paid[leftChild[u.ID]]
+		rp := paid[rightChild[u.ID]]
+		stat := AdminTeamStat{Volume: ZoneVolume(lp, rp)}
+		if uc.matches != nil {
+			lr, rr := decimal.Zero, decimal.Zero
+			if b := remain[u.ID]; b != nil {
+				lr, rr = b.LeftRemain, b.RightRemain
+			}
+			stat.Paired = PairedVolume(lp, rp, lr, rr)
+		}
+		out[u.ID] = stat
+	}
+	return out, nil
+}
+
 // PlacementUseCase 安置落位与树查询。
 type PlacementUseCase struct {
 	users      UserRepo

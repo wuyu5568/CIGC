@@ -190,10 +190,13 @@ const handleWithdrawal = async() => {
 
     if (res.status === 'ok') {
       showToast({
-        message: lang("提现成功"),
+        message: lang("已提交，处理中"),
         position: 'center',
         duration: 2000,
       });
+      amountUsdt.value = ''
+      person.getUser()
+      getAmountList(1)
     } else {
       showToast({
         message: res.status,

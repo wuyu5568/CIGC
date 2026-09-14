@@ -97,3 +97,9 @@ func TestComputeOrderStaticRelease_Finished(t *testing.T) {
 		t.Fatalf("pending should be 0: %s %s", r.PendingUSDT, r.PendingIspay)
 	}
 }
+
+func TestValueFromUSDTHalf(t *testing.T) {
+	if !ValueFromUSDTHalf(decimal.RequireFromString("33.33333000")).Equal(decimal.RequireFromString("66.66666000")) {
+		t.Fatalf("got %s", ValueFromUSDTHalf(decimal.RequireFromString("33.33333000")))
+	}
+}

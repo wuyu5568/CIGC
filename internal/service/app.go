@@ -212,8 +212,8 @@ func (s *AppService) CompatUserInfo(w http.ResponseWriter, r *http.Request) {
 		"inviteUserAddress": inviteAddr,
 		"withdrawRate":      decStr(limits.Rate),
 		"withdrawMin":       decStr(limits.Min),
-		"withdrawRateTwo":   "0",
-		"withdrawMinTwo":    "0",
+		"withdrawRateTwo":   decStr(limits.RateTwo),
+		"withdrawMinTwo":    decStr(limits.MinTwo),
 		"withdrawDaily":     decStr(limits.Daily),
 		"withdrawToday":     decStr(limits.Today),
 		"withdrawRemain":    decStr(limits.Remain),
@@ -323,6 +323,38 @@ func (s *AppService) CompatPackageList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "items": items, "release_tiers": releaseTiersJSON(), "ispay_price": decStr(s.ispaySpot(r.Context())), "buy_contract": s.buyContract()})
 }
 
+func (s *AppService) packageTitles(ctx context.Context) map[uint64]string {
+	out := map[uint64]string{}
+	if s == nil || s.orders == nil {
+		return out
+	}
+	pkgs, err := s.orders.ListAllPackages(ctx)
+	if err != nil {
+		return out
+	}
+	for _, p := range pkgs {
+		if p == nil {
+			continue
+		}
+		title := strings.TrimSpace(p.Title)
+		if title == "" {
+			continue
+		}
+		out[p.ID] = title
+	}
+	return out
+}
+
+func displayOrderTitle(o *biz.Order, titles map[uint64]string) string {
+	if o == nil {
+		return ""
+	}
+	if t := strings.TrimSpace(titles[o.PackageID]); t != "" {
+		return t
+	}
+	return o.TitleSnapshot
+}
+
 func packageJSON(p *biz.Package) map[string]any {
 	if p == nil {
 		return map[string]any{}
@@ -344,9 +376,20 @@ func packageJSON(p *biz.Package) map[string]any {
 		"days":         days,
 		"sort_order":   p.SortOrder,
 		"sortOrder":    p.SortOrder,
+		"sort":         p.SortOrder,
 		"enabled":      p.Enabled,
+		"on_sale":      onSaleInt(p.Enabled),
 		"status":       enabledStatus(p.Enabled),
+		"image":        strings.TrimSpace(p.Image),
+		"desc":         p.GoodsDesc,
 	}
+}
+
+func onSaleInt(on bool) int {
+	if on {
+		return 1
+	}
+	return 0
 }
 
 func enabledStatus(on bool) string {
@@ -577,14 +620,18 @@ func (s *AppService) CompatOrderList(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	titles := s.packageTitles(r.Context())
 	items := make([]map[string]any, 0, len(rows))
 	for _, o := range rows {
 		rel := releases[o.ID]
+		title := displayOrderTitle(o, titles)
 		item := map[string]any{
 			"id":             o.ID,
 			"order_no":       o.DisplayNo(),
 			"amount":         decStr(o.Amount),
-			"title":          o.TitleSnapshot,
+			"title":          title,
+			"name":           title,
+			"four":           title,
 			"goods":          o.GoodsSnapshot,
 			"status":         o.Status,
 			"release_days":   o.ReleaseDays,
@@ -700,24 +747,25 @@ func (s *AppService) CompatAdminSettle(w http.ResponseWriter, r *http.Request) {
 		status = "already_settled"
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":       status,
-		"forced":       res.Forced,
-		"settle_date":  res.SettleDate,
-		"user_count":   res.UserCount,
-		"cap_updated":  res.CapUpdated,
-		"direct_count": res.DirectCount,
-		"match_count":  res.MatchCount,
-		"manage_count": res.ManageCount,
-		"warning":      settleForceWarning(res),
+		"status":           status,
+		"forced":           res.Forced,
+		"settle_date":      res.SettleDate,
+		"user_count":       res.UserCount,
+		"cap_updated":      res.CapUpdated,
+		"direct_count":     res.DirectCount,
+		"match_count":      res.MatchCount,
+		"manage_count":     res.ManageCount,
+		"overflow_cleared": res.OverflowCleared,
+		"warning":          settleForceWarning(res),
 	})
 }
 
 func (s *AppService) CompatAdminDepositScan(w http.ResponseWriter, r *http.Request) {
-	if s.deposit == nil || !s.deposit.Enabled() {
+	if s.deposit == nil || !s.deposit.Runnable() {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "disabled", "enabled": false})
 		return
 	}
-	res, err := s.deposit.Scan(r.Context())
+	res, err := s.deposit.Run(r.Context())
 	if err != nil {
 		writeBizError(w, err)
 		return
@@ -729,9 +777,13 @@ func (s *AppService) CompatAdminDepositScan(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":       status,
 		"enabled":      true,
+		"mode":         res.Mode,
 		"from_block":   res.FromBlock,
 		"to_block":     res.ToBlock,
 		"head_block":   res.HeadBlock,
+		"from_index":   res.FromIndex,
+		"to_index":     res.ToIndex,
+		"length":       res.Length,
 		"seen":         res.Seen,
 		"matched":      res.Matched,
 		"abnormal":     res.Abnormal,
@@ -761,6 +813,20 @@ func (s *AppService) CompatAdminSettleStatus(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, out)
 }
 
+func (s *AppService) CompatAdminSettleReset(w http.ResponseWriter, r *http.Request) {
+	res, err := s.settle.ResetTestDay(r.Context())
+	if err != nil {
+		writeBizError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":           "ok",
+		"settle_today":     res.TodayDate,
+		"deleted":          res.Deleted,
+		"settle_next_test": res.NextTestDate,
+	})
+}
+
 func settleRunJSON(run *biz.SettleRun) map[string]any {
 	return map[string]any{
 		"settle_date":  run.SettleDate.Format("2006-01-02"),
@@ -776,7 +842,7 @@ func settleRunJSON(run *biz.SettleRun) map[string]any {
 
 func settleForceWarning(res *biz.SettleResult) string {
 	if res != nil && res.Forced {
-		return "force=1 settles the next day; test only"
+		return "force=1 settles the next day and clears overflow lots due by that 00:00; test only"
 	}
 	return ""
 }
@@ -814,6 +880,21 @@ func parsePage(r *http.Request) int {
 	n, err := strconv.Atoi(raw)
 	if err != nil || n < 1 {
 		return 1
+	}
+	return n
+}
+
+func parsePageSize(r *http.Request) int {
+	raw := strings.TrimSpace(firstNonEmpty(r.URL.Query().Get("page_size"), r.URL.Query().Get("pageSize")))
+	if raw == "" {
+		return biz.DefaultWeb3GoodsPageSize
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 {
+		return biz.DefaultWeb3GoodsPageSize
+	}
+	if n > biz.MaxWeb3GoodsPageSize {
+		return biz.MaxWeb3GoodsPageSize
 	}
 	return n
 }
@@ -910,8 +991,10 @@ func (s *AppService) CompatAdminBuyList(w http.ResponseWriter, r *http.Request) 
 		writeBizError(w, err)
 		return
 	}
+	titles := s.packageTitles(r.Context())
 	rewards := make([]map[string]any, 0, len(page.Items))
 	for _, o := range page.Items {
+		title := displayOrderTitle(&o.Order, titles)
 		rewards = append(rewards, map[string]any{
 			"id":           o.ID,
 			"orderNo":      o.DisplayNo(),
@@ -919,8 +1002,9 @@ func (s *AppService) CompatAdminBuyList(w http.ResponseWriter, r *http.Request) 
 			"address":      o.Address,
 			"createdAt":    o.CreatedAt.Format("2006-01-02 15:04:05"),
 			"status":       o.Status,
-			"one":          o.TitleSnapshot,
-			"title":        o.TitleSnapshot,
+			"one":          title,
+			"title":        title,
+			"name":         title,
 			"goods":        o.GoodsSnapshot,
 			"release_days": o.ReleaseDays,
 			"two":          "",
@@ -935,10 +1019,27 @@ func (s *AppService) CompatAdminBuyList(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *AppService) CompatAdminUserList(w http.ResponseWriter, r *http.Request) {
-	page, err := s.users.ListAdminUsers(r.Context(), strings.TrimSpace(r.URL.Query().Get("address")), parsePage(r))
+	ctx := r.Context()
+	page, err := s.users.ListAdminUsers(ctx, strings.TrimSpace(r.URL.Query().Get("address")), parsePage(r))
 	if err != nil {
 		writeBizError(w, err)
 		return
+	}
+	invites := map[uint64]int{}
+	if s.users != nil {
+		invites, err = s.users.InviteCountMap(ctx)
+		if err != nil {
+			writeBizError(w, err)
+			return
+		}
+	}
+	teams := map[uint64]biz.AdminTeamStat{}
+	if s.place != nil {
+		teams, err = s.place.AdminTeamStats(ctx)
+		if err != nil {
+			writeBizError(w, err)
+			return
+		}
 	}
 	out := make([]map[string]any, 0, len(page.Items))
 	for _, u := range page.Items {
@@ -950,31 +1051,42 @@ func (s *AppService) CompatAdminUserList(w http.ResponseWriter, r *http.Request)
 		paid := decStr(u.PaidAmount)
 		unlock := biz.ComputeLockUnlock(&u.User, false)
 		if s.settle != nil {
-			if preview, err := s.settle.PreviewUserLockUnlock(r.Context(), &u.User); err == nil {
+			if preview, err := s.settle.PreviewUserLockUnlock(ctx, &u.User); err == nil {
 				unlock = preview
 			}
 		}
+		asset := s.adminUserListAsset(ctx, u.ID)
+		team := teams[u.ID]
 		out = append(out, map[string]any{
 			"userId":             strconv.FormatUint(u.ID, 10),
 			"createdAt":          u.CreatedAt.Format("2006-01-02 15:04:05"),
 			"address":            u.Address,
 			"amountUsdtCurrent":  paid,
 			"bAmount":            zeroStr(),
-			"amountUsdtGet":      avail,
+			"amountUsdtGet":      decStr(asset.releasedStatic),
 			"amountUsdtTwo":      decStr(u.RechargeBalance),
 			"rechargeBalance":    decStr(u.RechargeBalance),
 			"balanceUsdt":        avail,
-			"balanceDhb":         zeroStr(),
-			"bAmountTwo":         zeroStr(),
-			"perDayAmount":       zeroStr(),
+			"available":          avail,
+			"balanceDhb":         decStr(u.IspayBalance),
+			"bAmountTwo":         decStr(asset.coins),
+			"perDayAmount":       decStr(asset.dailyCoins),
+			"coinsTotal":         decStr(asset.coins),
+			"dailyCoins":         decStr(asset.dailyCoins),
+			"releasedStatic":     decStr(asset.releasedStatic),
+			"pendingStatic":      decStr(asset.pendingStatic),
+			"directTotal":        decStr(asset.direct),
+			"matchTotal":         decStr(asset.match),
+			"manageTotal":        decStr(asset.manage),
 			"out":                "0",
-			"areaTeam":           zeroStr(),
-			"areaMax":            zeroStr(),
-			"areaTotal":          zeroStr(),
-			"areaMin":            zeroStr(),
+			"areaTeam":           decStr(team.Volume.Total),
+			"areaMax":            decStr(team.Volume.Max),
+			"areaTotal":          decStr(team.Volume.Total),
+			"areaMin":            decStr(team.Volume.Min),
+			"pairedVolume":       decStr(team.Paired),
 			"vip":                "0",
 			"vipLocked":          "0",
-			"historyRecommend":   "0",
+			"historyRecommend":   strconv.Itoa(invites[u.ID]),
 			"lock":               lock,
 			"lockReward":         "0",
 			"lockBalance":        decStr(u.LockBalance),
@@ -995,6 +1107,61 @@ func (s *AppService) CompatAdminUserList(w http.ResponseWriter, r *http.Request)
 		"users": out,
 		"count": strconv.Itoa(page.Total),
 	})
+}
+
+type adminUserListAsset struct {
+	coins, dailyCoins, releasedStatic, pendingStatic decimal.Decimal
+	direct, match, manage                            decimal.Decimal
+}
+
+func (s *AppService) adminUserListAsset(ctx context.Context, userID uint64) adminUserListAsset {
+	var out adminUserListAsset
+	if s == nil || userID == 0 {
+		return out
+	}
+	spot := s.ispaySpot(ctx)
+	if s.orders != nil {
+		rows, err := s.orders.ListOrders(ctx, userID)
+		if err == nil {
+			var rel map[uint64]biz.OrderStaticRelease
+			if s.settle != nil {
+				rel, err = s.settle.OrderStaticReleases(ctx, rows)
+				if err != nil {
+					rel = nil
+				}
+			}
+			releasedHalf := decimal.Zero
+			pendingHalf := decimal.Zero
+			for _, o := range rows {
+				if o == nil || o.Status != biz.OrderPaid {
+					continue
+				}
+				coins, daily, _, _, _, ok := biz.StaticDaily(o.Amount, o.ReleaseDays, spot)
+				if ok {
+					out.coins = out.coins.Add(coins)
+					out.dailyCoins = out.dailyCoins.Add(daily)
+				}
+				if rel != nil {
+					it := rel[o.ID]
+					releasedHalf = releasedHalf.Add(it.ReleasedUSDT)
+					pendingHalf = pendingHalf.Add(it.PendingUSDT)
+				}
+			}
+			out.releasedStatic = biz.ValueFromUSDTHalf(releasedHalf)
+			out.pendingStatic = biz.ValueFromUSDTHalf(pendingHalf)
+		}
+	}
+	if s.ledger != nil {
+		_, direct, match, manage, _, err := s.ledger.UserRewardTotals(ctx, userID)
+		if err == nil {
+			out.direct = biz.ValueFromUSDTHalf(direct)
+			out.match = biz.ValueFromUSDTHalf(match)
+			out.manage = biz.ValueFromUSDTHalf(manage)
+		}
+	}
+	out.coins = money.Round(out.coins)
+	out.dailyCoins = money.Round(out.dailyCoins)
+	return out
 }
 
 func (s *AppService) CompatAdminLockUser(w http.ResponseWriter, r *http.Request) {
@@ -1114,11 +1281,22 @@ func (s *AppService) CompatAdminRecordList(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *AppService) CompatAdminPackageList(w http.ResponseWriter, r *http.Request) {
+	raw := strings.TrimSpace(firstNonEmpty(r.URL.Query().Get("days"), r.URL.Query().Get("release_days")))
+	days := 0
+	if raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || !biz.ValidReleaseDays(n) {
+			writeJSON(w, http.StatusOK, map[string]string{"status": "请选择释放天数"})
+			return
+		}
+		days = n
+	}
 	pkgs, err := s.orders.ListAllPackages(r.Context())
 	if err != nil {
 		writeBizError(w, err)
 		return
 	}
+	pkgs = biz.FilterPackagesByDays(pkgs, days)
 	goods := make([]map[string]any, 0, len(pkgs))
 	for _, p := range pkgs {
 		goods = append(goods, packageJSON(p))
@@ -1590,8 +1768,11 @@ func (s *AppService) CompatAdminWithdrawList(w http.ResponseWriter, r *http.Requ
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"withdraw": out,
-		"count":    strconv.Itoa(page.Total),
+		"withdraw":      out,
+		"count":         strconv.Itoa(page.Total),
+		"payoutEnabled": s.withdraw != nil && s.withdraw.PayoutEnabled(),
+		"hotWallet":     withdrawHotWallet(s.withdraw),
+		"payoutMaxUsdt": decStr(withdrawPayoutMax(s.withdraw)),
 	})
 }
 
@@ -1621,14 +1802,29 @@ func (s *AppService) CompatAdminWithdrawPayout(w http.ResponseWriter, r *http.Re
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":  "ok",
-		"enabled": res.Enabled,
-		"scanned": res.Scanned,
-		"sent":    res.Sent,
-		"passed":  res.Passed,
-		"failed":  res.Failed,
-		"skipped": res.Skipped,
+		"status":    "ok",
+		"enabled":   res.Enabled,
+		"hotWallet": withdrawHotWallet(s.withdraw),
+		"scanned":   res.Scanned,
+		"sent":      res.Sent,
+		"passed":    res.Passed,
+		"failed":    res.Failed,
+		"skipped":   res.Skipped,
 	})
+}
+
+func withdrawHotWallet(uc *biz.WithdrawUseCase) string {
+	if uc == nil {
+		return ""
+	}
+	return uc.HotWalletAddress()
+}
+
+func withdrawPayoutMax(uc *biz.WithdrawUseCase) decimal.Decimal {
+	if uc == nil {
+		return decimal.Zero
+	}
+	return uc.PayoutMaxUSDT()
 }
 
 func readOptionalPayoutID(r *http.Request) (uint64, error) {
@@ -1949,20 +2145,36 @@ func (s *AppService) CompatAdminAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"totalUserR":    st.TotalUserR,
-		"totalUser":     st.TotalUser,
-		"todayUserR":    st.TodayUserR,
-		"todayUser":     st.TodayUser,
-		"buyTotal":      decStr(st.BuyTotal),
-		"todayBuy":      decStr(st.TodayBuy),
-		"balanceUsdt":   decStr(st.BalanceUSDT),
-		"todayOne":      decStr(st.TodayOne),
-		"todayTwo":      decStr(st.TodayTwo),
-		"todayThree":    decStr(st.TodayThree),
-		"totalReward":   decStr(st.TotalReward),
-		"todayWithdraw": decStr(st.TodayWithdraw),
-		"totalWithdraw": decStr(st.TotalWithdraw),
-		"totalIspay":    decStr(st.TotalIspay),
+		"totalUserR":         st.TotalUserR,
+		"totalUser":          st.TotalUser,
+		"todayUserR":         st.TodayUserR,
+		"todayUser":          st.TodayUser,
+		"orderCount":         st.OrderCount,
+		"todayOrderCount":    st.TodayOrderCount,
+		"buyTotal":           decStr(st.BuyTotal),
+		"todayBuy":           decStr(st.TodayBuy),
+		"depositTotal":       decStr(st.DepositTotal),
+		"todayDeposit":       decStr(st.TodayDeposit),
+		"rechargeRemain":     decStr(st.RechargeRemain),
+		"adminRecharge":      decStr(st.AdminRechargeNet),
+		"balanceUsdt":        decStr(st.BalanceUSDT),
+		"balanceIspay":       decStr(st.BalanceIspay),
+		"totalIspay":         decStr(st.BalanceIspay),
+		"lockBalance":        decStr(st.LockUSDT),
+		"lockIspay":          decStr(st.LockIspay),
+		"frozen":             decStr(st.FrozenUSDT),
+		"frozenIspay":        decStr(st.FrozenIspay),
+		"todayOne":           decStr(st.TodayOne),
+		"todayTwo":           decStr(st.TodayTwo),
+		"todayIspayDyn":      decStr(st.TodayIspayDyn),
+		"todayThree":         decStr(st.TodayThree),
+		"totalStatic":        decStr(st.TotalStatic),
+		"totalDynamic":       decStr(st.TotalDynamic),
+		"totalReward":        decStr(st.TotalReward),
+		"todayWithdraw":      decStr(st.TodayWithdraw),
+		"totalWithdraw":      decStr(st.TotalWithdraw),
+		"todayWithdrawIspay": decStr(st.TodayWithdrawIspay),
+		"totalWithdrawIspay": decStr(st.TotalWithdrawIspay),
 	})
 }
 
@@ -1978,11 +2190,15 @@ func (s *AppService) CompatAdminConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	list := make([]map[string]any, 0, len(rows))
 	for _, c := range rows {
+		group, hint, effect := biz.ConfigMeta(c.Key)
 		list = append(list, map[string]any{
-			"id":    strconv.FormatUint(c.ID, 10),
-			"key":   c.Key,
-			"name":  c.Name,
-			"value": c.Value,
+			"id":     strconv.FormatUint(c.ID, 10),
+			"key":    c.Key,
+			"name":   c.Name,
+			"value":  c.Value,
+			"group":  group,
+			"hint":   hint,
+			"effect": effect,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"config": list})

@@ -257,7 +257,7 @@ func LedgerName(entryType string) string {
 	case LedgerMatch, LedgerMatchIspay:
 		return "对碰奖励"
 	case LedgerManage, LedgerManageIspay:
-		return "三代管理奖"
+		return "管理奖"
 	case LedgerAdminAdjust:
 		return "管理端调整"
 	case LedgerWithdraw:
@@ -266,6 +266,12 @@ func LedgerName(entryType string) string {
 		return "提现冻结"
 	case LedgerUnfreeze:
 		return "提现解冻"
+	case LedgerActivate, LedgerActivateIspay:
+		return "解冻"
+	case LedgerCapOverflowRelease:
+		return "封顶超额释放"
+	case LedgerCapOverflowBurn:
+		return "封顶超额清除"
 	default:
 		return entryType
 	}
@@ -290,6 +296,10 @@ func LedgerReason(entryType string) string {
 		return "withdraw_freeze"
 	case LedgerUnfreeze:
 		return "withdraw_unfreeze"
+	case LedgerActivate:
+		return "unfreeze"
+	case LedgerActivateIspay:
+		return "unfreeze_ispay"
 	default:
 		return entryType
 	}

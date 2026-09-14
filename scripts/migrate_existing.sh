@@ -38,7 +38,12 @@ for f in \
   migrate_withdraw_daily.sql \
   migrate_recharge.sql \
   migrate_package_days.sql \
-  migrate_order_no.sql
+  migrate_order_no.sql \
+  migrate_package_titles.sql \
+  migrate_package_image.sql \
+  migrate_package_amount_days.sql \
+  migrate_daily_cap_overflow.sql \
+  migrate_ops_config.sql
 do
   echo "  apply $f"
   apply "$ROOT/scripts/$f"

@@ -9,10 +9,10 @@ import (
 )
 
 const (
-	remarkActivateUSDT     = "activate move lock to available"
-	remarkActivateIspay    = "activate move lock ispay"
-	remarkDailyLockUSDT    = "daily lock release"
-	remarkDailyLockIspay   = "daily lock release ispay"
+	remarkActivateUSDT   = "activate move lock to available"
+	remarkActivateIspay  = "activate move lock ispay"
+	remarkDailyLockUSDT  = "daily lock release"
+	remarkDailyLockIspay = "daily lock release ispay"
 )
 
 // orderActivateCap 购买单对应的封顶，用于激活时解冻额度。
@@ -65,13 +65,18 @@ func ApplyPaidOrderCap(ctx context.Context, users UserRepo, packages PackageRepo
 	return users.SetCapEffective(ctx, userID, want)
 }
 
-// ReleaseInactiveLock 已激活用户按给定封顶把冻结收益转到可提现 / ispay，超额留在冻结。
+// ReleaseInactiveLock 已激活用户按给定封顶把未入超额批次的冻结转到可提现 / ispay。
 func ReleaseInactiveLock(ctx context.Context, users UserRepo, balances UserBalanceRepo, ledger LedgerRepo, userID uint64, cap decimal.Decimal) error {
 	return ReleaseLockByCap(ctx, users, balances, ledger, userID, cap, nil, remarkActivateUSDT, remarkActivateIspay)
 }
 
 // ReleaseLockByCap 按封顶解冻；settleDay+remark 用于日结防重。
 func ReleaseLockByCap(ctx context.Context, users UserRepo, balances UserBalanceRepo, ledger LedgerRepo, userID uint64, cap decimal.Decimal, settleDay *time.Time, usdtRemark, ispayRemark string) error {
+	return ReleaseLockByCapReserved(ctx, users, balances, ledger, userID, cap, decimal.Zero, decimal.Zero, settleDay, usdtRemark, ispayRemark)
+}
+
+// ReleaseLockByCapReserved 按封顶解冻，但跳过 reserved（超额冻结由买单 daily_cap 解冻或 72h 清除）。
+func ReleaseLockByCapReserved(ctx context.Context, users UserRepo, balances UserBalanceRepo, ledger LedgerRepo, userID uint64, cap, reservedUSDT, reservedIspay decimal.Decimal, settleDay *time.Time, usdtRemark, ispayRemark string) error {
 	if users == nil || balances == nil || ledger == nil || userID == 0 {
 		return nil
 	}
@@ -88,8 +93,14 @@ func ReleaseLockByCap(ctx context.Context, users UserRepo, balances UserBalanceR
 	if !u.IsActivated() {
 		return nil
 	}
-	lock := money.Round(u.LockBalance)
-	lockIspay := money.Round(u.LockIspay)
+	lock := money.Round(u.LockBalance.Sub(money.Round(reservedUSDT)))
+	lockIspay := money.Round(u.LockIspay.Sub(money.Round(reservedIspay)))
+	if lock.IsNegative() {
+		lock = decimal.Zero
+	}
+	if lockIspay.IsNegative() {
+		lockIspay = decimal.Zero
+	}
 	move := activateMoveUSDT(lock, cap)
 	if move.IsPositive() {
 		if err := balances.SubLockBalance(ctx, userID, move); err != nil {
@@ -176,5 +187,27 @@ func (uc *SettleUseCase) PreviewUserLockUnlock(ctx context.Context, user *User) 
 		}
 		released = ok
 	}
-	return ComputeLockUnlock(user, released), nil
+	p := ComputeLockUnlock(user, released)
+	if uc != nil && uc.daily != nil && user.ID != 0 {
+		ou, oi, err := uc.daily.ActiveTotals(ctx, user.ID)
+		if err != nil {
+			return LockUnlockPreview{}, err
+		}
+		residual := money.Round(p.LockUSDT.Sub(ou))
+		residualIspay := money.Round(p.LockIspay.Sub(oi))
+		if residual.IsNegative() {
+			residual = decimal.Zero
+		}
+		if residualIspay.IsNegative() {
+			residualIspay = decimal.Zero
+		}
+		if !user.IsActivated() || released {
+			p.UnlockTodayUSDT = decimal.Zero
+			p.UnlockTodayIspay = decimal.Zero
+		} else {
+			p.UnlockTodayUSDT = activateMoveUSDT(residual, p.CapEffective)
+			p.UnlockTodayIspay = activateMoveIspay(residual, p.UnlockTodayUSDT, residualIspay)
+		}
+	}
+	return p, nil
 }

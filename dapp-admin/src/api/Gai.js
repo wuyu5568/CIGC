@@ -79,6 +79,13 @@ export default {
             params: parameter
         })
     },
+    settle_reset: (parameter) => {
+        return axios({
+            url: `${api8005}/settle_reset`,
+            method: 'post',
+            data: parameter || {}
+        })
+    },
     recommend_list: (parameter) => {
         return axios({
             url: `${api8005}/recommend_list`,

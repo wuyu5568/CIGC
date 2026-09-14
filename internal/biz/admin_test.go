@@ -16,9 +16,10 @@ func TestListAdminOrders(t *testing.T) {
 		t.Fatal(err)
 	}
 	orders := newMemOrders(users)
-	uc := NewOrderUseCase(&memPackages{rows: []*Package{{
-		ID: 1, Amount: decimal.RequireFromString("1000"), Title: "牙刷", Enabled: true,
-	}}}, orders, users, users, &memLedger{})
+	uc := NewOrderUseCase(&memPackages{rows: []*Package{
+		{ID: 1, Amount: decimal.RequireFromString("1000"), Title: "牙刷", Enabled: true, ReleaseDays: 300},
+		{ID: 2, Amount: decimal.RequireFromString("1000"), Title: "牙刷", Enabled: true, ReleaseDays: 600},
+	}}, orders, users, users, &memLedger{})
 	o1, err := uc.CreateOrder(context.Background(), u.ID, decimal.RequireFromString("1000"), 300)
 	if err != nil {
 		t.Fatal(err)

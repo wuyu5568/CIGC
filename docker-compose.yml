@@ -44,16 +44,19 @@ services:
       CIGC_SETTLE_TIMEZONE: ${CIGC_SETTLE_TIMEZONE:-Asia/Shanghai}
       CIGC_BSC_RPC: ${CIGC_BSC_RPC:-https://bsc-dataseed.binance.org/}
       CIGC_USDT_ADDRESS: ${CIGC_USDT_ADDRESS:-0x55d398326f99059fF775485246999027B3197955}
-      CIGC_BUY_CONTRACT: ${CIGC_BUY_CONTRACT:-0xCb63733FB936c7B3f147C757D383645e55769bF3}
+      CIGC_BUY_CONTRACT: ${CIGC_BUY_CONTRACT:-0x162bfFAcf7a89Bb6EbA05972C1DE0E1e97617c18}
       CIGC_RECEIVE_ADDRESS: ${CIGC_RECEIVE_ADDRESS:-}
       CIGC_RECEIVE_ADDRESSES: ${CIGC_RECEIVE_ADDRESSES:-}
-      CIGC_DEPOSIT_CRON: ${CIGC_DEPOSIT_CRON:-}
+      CIGC_DEPOSIT_CRON: ${CIGC_DEPOSIT_CRON:-"* * * * *"}
       CIGC_DEPOSIT_CONFIRMATIONS: ${CIGC_DEPOSIT_CONFIRMATIONS:-12}
       CIGC_PAYOUT_ENABLED: ${CIGC_PAYOUT_ENABLED:-false}
-      CIGC_PAYOUT_CRON: ${CIGC_PAYOUT_CRON:-}
+      CIGC_PAYOUT_CRON: ${CIGC_PAYOUT_CRON:-"* * * * *"}
       CIGC_PAYOUT_MAX_USDT: ${CIGC_PAYOUT_MAX_USDT:-}
       CIGC_HOT_WALLET_KEY: ${CIGC_HOT_WALLET_KEY:-}
+      CIGC_UPLOAD_DIR: ${CIGC_UPLOAD_DIR:-/data/uploads}
       TZ: Asia/Shanghai
+    volumes:
+      - cigc-uploads:/data/uploads
     ports:
       - "127.0.0.1:8000:8000"
     healthcheck:
@@ -76,6 +79,8 @@ services:
       - ./deploy/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
       - ${DAPP_DIST:-./deploy/nginx/placeholder/dapp}:/usr/share/nginx/html/dapp:ro
       - ${ADMIN_DIST:-./deploy/nginx/placeholder/admin}:/usr/share/nginx/html/admin:ro
+      - cigc-uploads:/usr/share/nginx/html/uploads:ro
 
 volumes:
   mysql-data:
+  cigc-uploads:

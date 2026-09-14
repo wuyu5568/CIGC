@@ -21,9 +21,10 @@ const err = (error) => {
         const token = Vue.ls.get(ACCESS_TOKEN)
         if (error.response.status === 403) {
             notification.error({
-                message: 'Forbidden',
-                description: data.message
+                message: '没有权限',
+                description: data.message || data.reason || '操作被拒绝'
             })
+            return Promise.reject(error)
         }
         if (error.response.status === 401 && !(data.result && data.result.isLogin)) {
             notification.error({
