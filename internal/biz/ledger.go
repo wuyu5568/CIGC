@@ -71,26 +71,26 @@ type LedgerRepo interface {
 
 // RewardItem 是用户/管理端流水展示行。
 type RewardItem struct {
-	ID          uint64
-	Amount      string
-	AmountTwo   string
-	Name        string
-	Reason      string
-	Category    string
-	Address     string
-	Num         string
-	Remark      string
-	Detail      string
-	BalanceKind string
-	BalanceName string
-	OrderID        string
-	OrderNo        string
-	OrderAmount    string
-	OrderTitle     string
-	OrderSource    string
-	SourceAddress  string
-	SettleDate     string
-	CreatedAt      time.Time
+	ID            uint64
+	Amount        string
+	AmountTwo     string
+	Name          string
+	Reason        string
+	Category      string
+	Address       string
+	Num           string
+	Remark        string
+	Detail        string
+	BalanceKind   string
+	BalanceName   string
+	OrderID       string
+	OrderNo       string
+	OrderAmount   string
+	OrderTitle    string
+	OrderSource   string
+	SourceAddress string
+	SettleDate    string
+	CreatedAt     time.Time
 }
 
 // RewardPage 分页结果。
@@ -460,17 +460,50 @@ func (uc *LedgerUseCase) ListUserRewards(ctx context.Context, userID uint64, req
 		return &RewardPage{Items: []*RewardItem{}, Total: 0}, nil
 	}
 	now := uc.now()
-	from := now.AddDate(-1, 0, 0)
+	from := now.AddDate(-20, 0, 0)
 	to := now.AddDate(0, 0, 1)
 	rows, err := uc.ledger.ListByUser(ctx, userID, from, to)
 	if err != nil {
 		return nil, err
 	}
 	filtered := filterUserRewards(rows, want)
+	if err := uc.attachOrderSources(ctx, filtered); err != nil {
+		return nil, err
+	}
 	return &RewardPage{
 		Items: paginateRewards(filtered, page, DefaultRewardPageSize),
 		Total: len(filtered),
 	}, nil
+}
+
+// UserRewardTotals 用户端资产页：四类 U 入账合计 + 静态释放次数。
+func (uc *LedgerUseCase) UserRewardTotals(ctx context.Context, userID uint64) (static, direct, match, manage decimal.Decimal, staticTimes int, err error) {
+	if uc == nil || uc.ledger == nil || userID == 0 {
+		return
+	}
+	now := uc.now()
+	rows, err := uc.ledger.ListByUser(ctx, userID, now.AddDate(-20, 0, 0), now.AddDate(0, 0, 1))
+	if err != nil {
+		return
+	}
+	for _, e := range rows {
+		if e == nil {
+			continue
+		}
+		amt := money.Round(e.Amount)
+		switch e.EntryType {
+		case LedgerStatic:
+			static = money.Round(static.Add(amt))
+			staticTimes++
+		case LedgerDirect:
+			direct = money.Round(direct.Add(amt))
+		case LedgerMatch:
+			match = money.Round(match.Add(amt))
+		case LedgerManage:
+			manage = money.Round(manage.Add(amt))
+		}
+	}
+	return
 }
 
 // ListAdminRewards 管理端流水：分页 + address + reason；reason 空则全类型。

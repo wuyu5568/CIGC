@@ -328,6 +328,30 @@ func TestListUserRewards_Pagination(t *testing.T) {
 	}
 }
 
+func TestUserRewardTotals(t *testing.T) {
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	uc := NewLedgerUseCase(&memLedger{rows: []*LedgerEntry{
+		{UserID: 1, EntryType: LedgerStatic, Amount: decimal.RequireFromString("1.1"), CreatedAt: now},
+		{UserID: 1, EntryType: LedgerStatic, Amount: decimal.RequireFromString("2.2"), CreatedAt: now},
+		{UserID: 1, EntryType: LedgerStaticIspay, Amount: decimal.RequireFromString("9"), CreatedAt: now},
+		{UserID: 1, EntryType: LedgerDirect, Amount: decimal.RequireFromString("3"), CreatedAt: now},
+		{UserID: 1, EntryType: LedgerMatch, Amount: decimal.RequireFromString("4"), CreatedAt: now},
+		{UserID: 1, EntryType: LedgerManage, Amount: decimal.RequireFromString("5"), CreatedAt: now},
+		{UserID: 2, EntryType: LedgerStatic, Amount: decimal.RequireFromString("99"), CreatedAt: now},
+	}}, nil, nil)
+	uc.now = func() time.Time { return now }
+	static, direct, match, manage, times, err := uc.UserRewardTotals(context.Background(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if times != 2 {
+		t.Fatalf("times=%d want 2", times)
+	}
+	if static.String() != "3.3" || direct.String() != "3" || match.String() != "4" || manage.String() != "5" {
+		t.Fatalf("static=%s direct=%s match=%s manage=%s", static, direct, match, manage)
+	}
+}
+
 func TestListAdminRewards_ReasonFilter(t *testing.T) {
 	now := time.Now()
 	repo := &memLedger{rows: []*LedgerEntry{

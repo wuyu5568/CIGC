@@ -29,7 +29,14 @@
                     v-if="full"
                     type="info"
                     show-icon
-                    message="测试模式：一次展开全部邀请关系与双轨安置。点击节点可切换到该用户。正式上线把 full_downline 设为 false 即恢复逐层查看。"
+                    message="测试模式：一次展开全部邀请关系与双轨安置。人数上万时不可用于正式环境。"
+                    style="margin-bottom:16px"
+                />
+                <a-alert
+                    v-else
+                    type="info"
+                    show-icon
+                    message="正式模式：每次只展示当前用户的直推与左右区。点击节点查看下一层。"
                     style="margin-bottom:16px"
                 />
 

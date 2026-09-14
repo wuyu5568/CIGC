@@ -9,10 +9,12 @@ import pinia from './pinia'
 import App from './App.vue';
 import Antd from 'ant-design-vue';
 import regComponents from "./components/index";
-import Vant from 'vant';
+import Vant, { Locale } from 'vant';
+import zhCN from 'vant/es/locale/lang/zh-CN';
+import enUS from 'vant/es/locale/lang/en-US';
 import router from './router'
-// import eruda from 'eruda'
-// eruda.init()
+
+Locale.use((localStorage.getItem('lan') || 'zh') === 'en' ? 'en-US' : 'zh-CN', (localStorage.getItem('lan') || 'zh') === 'en' ? enUS : zhCN)
 
 const app = createApp(App);
 app.use(i18n);

@@ -214,9 +214,11 @@ const onLangSelect = (event: any) => {
   if (key === 'en') {
     localStorage.setItem('lan', 'en')
     locale.value = 'en'
+    window.location.reload()
   } else if (key === 'zh') {
     localStorage.setItem('lan', 'zh')
     locale.value = 'zh'
+    window.location.reload()
   }
 }
 const getLan = () => window.localStorage.getItem('lan') || 'zh'

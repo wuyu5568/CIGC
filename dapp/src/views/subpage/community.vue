@@ -12,30 +12,30 @@
       <h2>{{ lang('我的社群') }}</h2>
       <p>{{ lang('您可以在这里绑定邀请关系，也可以复制邀请链接邀请您的好友加入。') }}</p>
     </div>
-    <div className="info-box">
-      <div className="info-title">{{ lang('上级邀请地址') }}</div>
-      <div className="info-address">{{ formatAddress(userinfo.inviteUserAddress) }}</div>
+    <div class="info-box">
+      <div class="info-title">{{ lang('上级邀请地址') }}</div>
+      <div class="info-address">{{ formatAddress(userinfo.inviteUserAddress) }}</div>
     </div>
-    <div className="info-box">
-      <div className="info-title">{{ lang('我的邀请链接') }}</div>
-      <div className="info-link">
+    <div class="info-box">
+      <div class="info-title">{{ lang('我的邀请链接') }}</div>
+      <div class="info-link">
         <span>{{ inviteUrl }}</span>
-        <i className="copy-address-button" @click="copyToClipboard(inviteUrl)"></i>
+        <i class="copy-address-button" @click="copyToClipboard(inviteUrl)"></i>
       </div>
     </div>
-    <div className="performance-list">
-      <div className="performance-info">
-        <div className="performance-info-item">
+    <div class="performance-list">
+      <div class="performance-info">
+        <div class="performance-info-item">
           <p>{{ userinfo.total || 0 }}</p>
           <p>{{ lang('总业绩') }}</p>
         </div>
-        <div className="performance-info-item">
+        <div class="performance-info-item">
           <p>{{ userinfo.max || 0 }}</p>
           <p>{{ lang('大区业绩') }}</p>
         </div>
       </div>
-      <div className="performance-share-title">{{ lang('直接邀请数据') }}</div>
-      <div className="performance-share-list">
+      <div class="performance-share-title">{{ lang('直接邀请数据') }}</div>
+      <div class="performance-share-list">
         <a-tree
           v-if="treeData.length > 0"
           v-model:expandedKeys="expandedKeys"
@@ -43,12 +43,12 @@
           :load-data="onLoadData"
           :tree-data="treeData"
         />
-        <!-- <div className="performance-share-header">
+        <!-- <div class="performance-share-header">
           <span>{{ lang('地址') }}</span>
           <span>{{ lang('个人累计') }}</span>
           <span>{{ lang('团队累计') }}</span>
         </div>
-        <div className="performance-share-item">
+        <div class="performance-share-item">
         </div> -->
       </div>
     </div>

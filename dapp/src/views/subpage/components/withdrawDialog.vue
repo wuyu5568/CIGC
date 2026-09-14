@@ -1,12 +1,12 @@
 <template>
   <a-modal forceRender :maskClosable="false" v-model:open="isOpen" :footer="null" centered destroyOnClose :title="null" @ok="handleOk">
     <div class='withdraw-dialog'>
-      <div class="dialog-title">{{ type === 'USDT' ? lang('当前USDT余额') : lang('当前ISPAY余额') }}：{{type === 'USDT' ? userinfo.usdt : type === 'NEWISPAY' ? userinfo.ispayAmount : userinfo.raw}}</div>
+      <div class="dialog-title">{{ isUsdt ? lang('当前USDT余额') : lang('当前ISPAY余额') }}：{{ fmt(balance) }}</div>
       <div class="dialog-main">
-        <a-input-number style="width: 100%" v-model:value="amount" :max="type === 'USDT' ? userinfo.usdt : type === 'NEWISPAY' ? userinfo.ispayAmount : userinfo.raw" size="large" :placeholder="lang('请输入数量')" />
+        <a-input-number style="width: 100%" v-model:value="amount" :max="Number(balance || 0)" size="large" :placeholder="lang('请输入数量')" />
         <div class="dialog-info">
-        <p><QuestionCircleOutlined style="margin-right: 5px" />{{ lang('最小提现数量') }}: {{userinfo.withdrawMinTwo}}</p>
-        <p>{{lang('手续费')}}：{{ amountRound(Number(userinfo.withdrawRate) * (amount || 0)) }}</p>
+        <p><QuestionCircleOutlined style="margin-right: 5px" />{{ lang('最小提现数量') }}: {{ fmt(minAmount) }}</p>
+        <p>{{lang('手续费')}}：{{ isUsdt ? fmt(fee) : 0 }}</p>
         </div>
       </div>
       <a-button class="withdraw-btn" :disabled="loading" size="large" @click="handleWithdrawal" type="primary">{{lang('提现')}}</a-button>
@@ -20,14 +20,22 @@ import fetchSign from '@/pinia/fetchSign'
 import { showToast } from 'vant'
 import request from "@/tools/request";
 import lang from '@/i18n/index'
+import { displayAmount } from '@/tools/amount'
 
 const person = userPerson();
 const userinfo = $computed(() => person.userinfo);
-// const sign = $computed(() => person.sign);
 const isOpen = $ref(false)
 const amount = $ref(null)
 const type = $ref('USDT')
 const loading = $ref(false)
+const isUsdt = $computed(() => type === 'USDT')
+const balance = $computed(() => isUsdt ? userinfo.usdt : (userinfo.ispay || userinfo.ispayAmount || 0))
+const minAmount = $computed(() => isUsdt ? (userinfo.withdrawMin || 0) : 0)
+const fee = $computed(() => {
+  if (!isUsdt) return 0
+  return Number(userinfo.withdrawRate || 0) * Number(amount || 0)
+})
+const fmt = (v) => displayAmount(v)
 
 const props = defineProps({
   onChange: {
@@ -36,32 +44,25 @@ const props = defineProps({
   }
 })
 
-const amountRound = (num) => {
-  return Math.round(num * 100) / 100
-}
-
 const open = (t) => {
-  console.log('WithdrawDialog open', t)
   type = t
   isOpen = true
 }
 
 const handleWithdrawal = async () => {
-  console.log('WithdrawDialog handleWithdrawal', amount)
   if (loading) return
   loading = true
-  if (amount < userinfo.withdrawMinTwo) {
+  if (Number(amount || 0) <= 0) {
+    loading = false
+    return showToast(lang('请输入金额'))
+  }
+  if (isUsdt && Number(amount) < Number(minAmount || 0)) {
     loading = false
     return showToast(lang('提现数量不能小于最小提现数量'))
   }
-  if (type === 'NEWISPAY' ? amount > userinfo.ispayAmount : amount > userinfo.usdt) {
+  if (Number(amount) > Number(balance || 0)) {
     loading = false
     return showToast(lang('提现数量不能大于余额'))
-  }
-
-  if (type === 'ISPAY') {
-    loading = false
-    return showToast(lang('暂不支持ISPAY提现'))
   }
 
   const sign = await fetchSign()
@@ -69,13 +70,14 @@ const handleWithdrawal = async () => {
   await request.post("app_server/withdraw", {
     amount,
     sign: sign,
-    coinType: type === 'NEWISPAY' ? 3 : undefined
+    coinType: isUsdt ? 1 : 3
   }).then((res) => {
     loading = false
 
     if (res.status === 'ok') {
       isOpen = false
       amount = null
+      person.getUser()
       props.onChange()
       showToast({
         message: lang("提现成功"),

@@ -46,7 +46,7 @@ func NewAppService(users *biz.UserUseCase, orders *biz.OrderUseCase, settle *biz
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		return
@@ -195,13 +195,18 @@ func (s *AppService) CompatUserInfo(w http.ResponseWriter, r *http.Request) {
 	if s.withdraw != nil {
 		limits = s.withdraw.UserLimits(r.Context(), user.ID)
 	}
+	stats, err := s.userAssetStats(r.Context(), user.ID)
+	if err != nil {
+		writeBizError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":            "ok",
 		"address":           user.Address,
 		"level":             "0",
 		"usdt":              avail,
 		"raw":               avail,
-		"amountGet":         avail,
+		"amountGet":         stats["amountGet"],
 		"amountUsdt":        recharge,
 		"rechargeBalance":   recharge,
 		"inviteUserAddress": inviteAddr,
@@ -221,12 +226,19 @@ func (s *AppService) CompatUserInfo(w http.ResponseWriter, r *http.Request) {
 		"max":               decStr(vol.Max),
 		"min":               decStr(vol.Min),
 		"buy":               decStr(user.PaidAmount),
-		"amountGetSub":      "0",
-		"outNum":            "0",
-		"location":          "0",
-		"recommend":         "0",
-		"recommendTwo":      "0",
-		"team":              "0",
+		"amountGetSub":      stats["amountGetSub"],
+		"outNum":            stats["outNum"],
+		"pendingStatic":     stats["pendingStatic"],
+		"releasedStatic":    stats["releasedStatic"],
+		"releaseCount":      stats["releaseCount"],
+		"location":          stats["location"],
+		"recommend":         stats["recommend"],
+		"recommendTwo":      stats["recommendTwo"],
+		"team":              stats["team"],
+		"staticTotal":       stats["staticTotal"],
+		"directTotal":       stats["directTotal"],
+		"matchTotal":        stats["matchTotal"],
+		"manageTotal":       stats["manageTotal"],
 		"teamTwo":           "0",
 		"all":               avail,
 		"notice":            "",
@@ -248,6 +260,54 @@ func (s *AppService) CompatUserInfo(w http.ResponseWriter, r *http.Request) {
 		"release_tiers":     releaseTiersJSON(),
 		"buy_contract":      s.buyContract(),
 	})
+}
+
+func (s *AppService) userAssetStats(ctx context.Context, userID uint64) (map[string]any, error) {
+	pending := decimal.Zero
+	released := decimal.Zero
+	if s.orders != nil && s.settle != nil {
+		rows, err := s.orders.ListOrders(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		rel, err := s.settle.OrderStaticReleases(ctx, rows)
+		if err != nil {
+			return nil, err
+		}
+		for _, o := range rows {
+			if o == nil {
+				continue
+			}
+			it := rel[o.ID]
+			pending = pending.Add(it.PendingUSDT)
+			released = released.Add(it.ReleasedUSDT)
+		}
+	}
+	staticT, direct, match, manage := decimal.Zero, decimal.Zero, decimal.Zero, decimal.Zero
+	times := 0
+	if s.ledger != nil {
+		var err error
+		staticT, direct, match, manage, times, err = s.ledger.UserRewardTotals(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return map[string]any{
+		"amountGetSub":   decStr(money.Round(pending)),
+		"amountGet":      decStr(money.Round(released)),
+		"outNum":         strconv.Itoa(times),
+		"pendingStatic":  decStr(money.Round(pending)),
+		"releasedStatic": decStr(money.Round(released)),
+		"releaseCount":   strconv.Itoa(times),
+		"location":       decStr(staticT),
+		"recommend":      decStr(direct),
+		"recommendTwo":   decStr(match),
+		"team":           decStr(manage),
+		"staticTotal":    decStr(staticT),
+		"directTotal":    decStr(direct),
+		"matchTotal":     decStr(match),
+		"manageTotal":    decStr(manage),
+	}, nil
 }
 
 func (s *AppService) CompatPackageList(w http.ResponseWriter, r *http.Request) {
@@ -537,8 +597,14 @@ func (s *AppService) CompatOrderList(w http.ResponseWriter, r *http.Request) {
 			"pending_ispay":  decStr(rel.PendingIspay),
 			"settle_date":    rel.SettleDate,
 		}
+		item["created_at"] = o.CreatedAt.Format("2006-01-02 15:04:05")
+		item["createdAt"] = o.CreatedAt.Format("2006-01-02 15:04:05")
 		if o.PaidAt != nil {
-			item["paid_at"] = o.PaidAt.Format("2006-01-02 15:04:05")
+			paid := o.PaidAt.Format("2006-01-02 15:04:05")
+			item["paid_at"] = paid
+			item["purchase_date"] = paid
+		} else {
+			item["purchase_date"] = o.CreatedAt.Format("2006-01-02 15:04:05")
 		}
 		items = append(items, item)
 	}
@@ -766,15 +832,20 @@ func (s *AppService) CompatRewardList(w http.ResponseWriter, r *http.Request) {
 	list := make([]map[string]any, 0, len(page.Items))
 	for _, it := range page.Items {
 		list = append(list, map[string]any{
-			"id":        it.ID,
-			"amount":    it.Amount,
-			"amountTwo": it.AmountTwo,
-			"reward":    it.Amount,
-			"name":      it.Name,
-			"address":   it.Address,
-			"num":       it.Num,
-			"reason":    it.Reason,
-			"createdAt": it.CreatedAt.Format("2006-01-02 15:04:05"),
+			"id":          it.ID,
+			"amount":      it.Amount,
+			"amountTwo":   it.AmountTwo,
+			"reward":      it.Amount,
+			"name":        it.Name,
+			"address":     it.Address,
+			"num":         it.Num,
+			"reason":      it.Reason,
+			"orderNo":     it.OrderNo,
+			"orderTitle":  it.OrderTitle,
+			"orderAmount": it.OrderAmount,
+			"settleDate":  it.SettleDate,
+			"detail":      it.Detail,
+			"createdAt":   it.CreatedAt.Format("2006-01-02 15:04:05"),
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -797,27 +868,27 @@ func (s *AppService) CompatAdminRewardList(w http.ResponseWriter, r *http.Reques
 	rewards := make([]map[string]any, 0, len(page.Items))
 	for _, it := range page.Items {
 		rewards = append(rewards, map[string]any{
-			"id":          it.ID,
-			"amount":      it.Amount,
-			"amountTwo":   it.AmountTwo,
-			"reward":      it.Amount,
-			"name":        it.Name,
-			"category":    it.Category,
-			"address":     it.Address,
-			"num":         it.Num,
-			"reason":      it.Reason,
-			"remark":      it.Remark,
-			"detail":      it.Detail,
-			"balance":     it.BalanceKind,
-			"balanceName": it.BalanceName,
-			"orderId":        it.OrderID,
-			"orderNo":        it.OrderNo,
-			"orderAmount":    it.OrderAmount,
-			"orderTitle":     it.OrderTitle,
-			"orderSource":    it.OrderSource,
-			"sourceAddress":  it.SourceAddress,
-			"settleDate":     it.SettleDate,
-			"createdAt":   it.CreatedAt.Format("2006-01-02 15:04:05"),
+			"id":            it.ID,
+			"amount":        it.Amount,
+			"amountTwo":     it.AmountTwo,
+			"reward":        it.Amount,
+			"name":          it.Name,
+			"category":      it.Category,
+			"address":       it.Address,
+			"num":           it.Num,
+			"reason":        it.Reason,
+			"remark":        it.Remark,
+			"detail":        it.Detail,
+			"balance":       it.BalanceKind,
+			"balanceName":   it.BalanceName,
+			"orderId":       it.OrderID,
+			"orderNo":       it.OrderNo,
+			"orderAmount":   it.OrderAmount,
+			"orderTitle":    it.OrderTitle,
+			"orderSource":   it.OrderSource,
+			"sourceAddress": it.SourceAddress,
+			"settleDate":    it.SettleDate,
+			"createdAt":     it.CreatedAt.Format("2006-01-02 15:04:05"),
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -849,6 +920,8 @@ func (s *AppService) CompatAdminBuyList(w http.ResponseWriter, r *http.Request) 
 			"createdAt":    o.CreatedAt.Format("2006-01-02 15:04:05"),
 			"status":       o.Status,
 			"one":          o.TitleSnapshot,
+			"title":        o.TitleSnapshot,
+			"goods":        o.GoodsSnapshot,
 			"release_days": o.ReleaseDays,
 			"two":          "",
 			"three":        "",
@@ -1799,11 +1872,36 @@ func (s *AppService) CompatAdminDownline(w http.ResponseWriter, r *http.Request)
 		writeBizError(w, err)
 		return
 	}
+	writeJSON(w, http.StatusOK, downlineViewJSON(view))
+}
+
+func (s *AppService) CompatUserDownline(w http.ResponseWriter, r *http.Request) {
+	uid, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
+		writeBizError(w, biz.ErrUnauthorized)
+		return
+	}
+	if s.place == nil {
+		writeJSON(w, http.StatusOK, downlineViewJSON(&biz.DownlineView{}))
+		return
+	}
+	view, err := s.place.UserDownline(r.Context(), uid, strings.TrimSpace(r.URL.Query().Get("address")))
+	if err != nil {
+		writeBizError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, downlineViewJSON(view))
+}
+
+func downlineViewJSON(view *biz.DownlineView) map[string]any {
+	if view == nil {
+		view = &biz.DownlineView{}
+	}
 	invites := make([]map[string]any, 0, len(view.Invites))
 	for _, it := range view.Invites {
 		invites = append(invites, downlinePersonJSON(it))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	return map[string]any{
 		"status":       "ok",
 		"full":         view.Full,
 		"current":      downlinePersonJSON(view.Current),
@@ -1813,7 +1911,7 @@ func (s *AppService) CompatAdminDownline(w http.ResponseWriter, r *http.Request)
 		"invites":      invites,
 		"left":         downlineSlotJSON(view.Left),
 		"right":        downlineSlotJSON(view.Right),
-	})
+	}
 }
 
 func (s *AppService) CompatRecommendList(w http.ResponseWriter, r *http.Request) {

@@ -77,7 +77,7 @@ _Avoid_: 未激活把收益记入可提现；激活后仍把新收益进 lock；
 _Avoid_: 用安置关系算直推/管理奖
 
 **安置**:
-表 `user_placements`（`user_id` 唯一；`uk(sponsor_id,side)` 每人左右各最多一个直接子）。与推荐关系分离。创世不落位。注册即按邀请时间自动落位。管理端仍可 `POST/GET /placement`。管理 `GET /downline`（`user_id` 或 `address`）正式模式返回当前人一层：邀请直推名单 + 左右安置，不递归整树。测试 `full_downline=true`（`CIGC_FULL_DOWNLINE`）时展开全部邀请后代与双轨安置；正式上线改回 `false`。用户 `recommend_list` 在全量模式下同样带嵌套 `children`。已有库执行 `scripts/migrate_user_placements.sql`。
+表 `user_placements`（`user_id` 唯一；`uk(sponsor_id,side)` 每人左右各最多一个直接子）。与推荐关系分离。创世不落位。注册即按邀请时间自动落位。管理端仍可 `POST/GET /placement`。管理 `GET /downline`（`user_id` 或 `address`）与用户 `GET /api/app_server/downline` 正式模式只返回当前人一层：邀请直推名单 + 左右安置，不递归整树；用户端点他人仅当对方在自己的邀请或安置子树内。测试 `full_downline=true`（`CIGC_FULL_DOWNLINE`）时管理端才一次展开全部邀请后代与双轨安置；正式上线必须为 `false`，人数上万时禁止整树展开。用户 `recommend_list` 在全量模式下同样带嵌套 `children`。已有库执行 `scripts/migrate_user_placements.sql`。
 
 1. 同一邀请人按邀请先后：第 1 人挂其左区，第 2 人挂其右区。
 2. 被邀请人的左区是**共享链**：邀请人和该被邀请人都能往这个左区挂人。

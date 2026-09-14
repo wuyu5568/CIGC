@@ -508,6 +508,38 @@ func TestAdminDownline_OneLevelInviteAndPlacement(t *testing.T) {
 	if full.Left == nil || full.Left.Left == nil || full.Left.Left.Address != "0xd" {
 		t.Fatalf("full placement L.L=%+v", full.Left)
 	}
+
+	own, err := uc.UserDownline(context.Background(), a.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if own.Current == nil || own.Current.Address != "0xa" {
+		t.Fatalf("own %+v", own.Current)
+	}
+	if own.Full {
+		t.Fatal("user downline must be one level")
+	}
+	if len(own.Invites) != 2 {
+		t.Fatalf("invites=%d want 2", len(own.Invites))
+	}
+	for _, it := range own.Invites {
+		if it != nil && len(it.Children) != 0 {
+			t.Fatal("must not expand invite children")
+		}
+	}
+	if own.Left != nil && own.Left.Left != nil {
+		t.Fatal("must not expand placement children")
+	}
+	if _, err := uc.UserDownline(context.Background(), a.ID, "0xd"); err != nil {
+		t.Fatal(err)
+	}
+	outsider, err := users.Create(context.Background(), &User{Address: "0xz"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := uc.UserDownline(context.Background(), a.ID, outsider.Address); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("outsider err=%v", err)
+	}
 }
 
 func TestTeamVolumeOf(t *testing.T) {

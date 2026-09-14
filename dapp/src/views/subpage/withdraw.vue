@@ -9,15 +9,15 @@
   />
   <div class="page-main">
     <div class="withdraw-info">
-      <p class="withdraw-balance">{{ route.params.type === 'usdt' ? userinfo.usdt : route.params.type === 'newIspay' ? userinfo.ispayAmount : userinfo.raw }}</p>
-      <p class="withdraw-name">{{ route.params.type === 'usdt' ? 'USDT' : 'ISPAY' }}</p>
-      <button class="withdraw-btn" @click="showWithdraw(route.params.type === 'usdt' ? 'USDT' : route.params.type === 'newIspay' ? 'NEWISPAY' : 'ISPAY')"><van-icon name="balance-pay" />{{ lang('提现') }}</button>
+      <p class="withdraw-balance">{{ isUsdt ? fmt(userinfo.usdt) : fmt(userinfo.ispay || userinfo.ispayAmount) }}</p>
+      <p class="withdraw-name">{{ isUsdt ? 'USDT' : 'ISPAY' }}</p>
+      <button class="withdraw-btn" @click="showWithdraw(isUsdt ? 'USDT' : 'NEWISPAY')"><van-icon name="balance-pay" />{{ lang('提现') }}</button>
     </div>
     <div class="withdraw-tab">
       <ul class="withdraw-tab-title">
         <!-- <li :class="{active: active === '1'}" @click="active = '1'">账户记录</li> -->
         <li :class="{active: active === '2'}" @click="active = '2'">{{ lang('提现记录') }}</li>
-        <li v-if="route.params.type === 'ispay'" :class="{active: active === '4'}" @click="active = '4'">{{ lang('锁仓记录') }}</li>
+        <li v-if="false" :class="{active: active === '4'}" @click="active = '4'">{{ lang('锁仓记录') }}</li>
       </ul>
       <!-- <div class="withdraw-tab-content">
         <div class="empty">
@@ -67,6 +67,7 @@ import { Pagination } from "vant"
 import WithdrawDialog from "./components/withdrawDialog.vue";
 import emptyImage from '../../assets/images/custom-empty-image.png'
 import lang from '@/i18n/index'
+import { displayAmount } from '@/tools/amount'
 
 const route = useRoute()
 
@@ -74,6 +75,8 @@ const router = useRouter()
 const person = userPerson();
 const active = $ref('2')
 const userinfo = $computed(() => person.userinfo);
+const isUsdt = $computed(() => route.params.type === 'usdt')
+const fmt = (v) => displayAmount(v)
 const withdrawDialogRef = ref(null)
 const amountList = $ref([])
 const allPage = $ref(1)
@@ -88,13 +91,13 @@ const handleBack = () => {
 }
 
 const updateList = () => {
-  route.params.type === 'usdt' && getAmountList()
+  getAmountList()
 }
 
 const getAmountList = async (page = 1) => {
     await request.get("app_server/withdraw_list", {
       params: {
-        coinType: route.params.type === 'newIspay' ? 3 : undefined,
+        coinType: isUsdt ? 1 : 3,
         page
       }
     }).then((res) => {
@@ -103,7 +106,7 @@ const getAmountList = async (page = 1) => {
     })
 }
 
-(route.params.type === 'usdt' || route.params.type === 'newIspay') && getAmountList()
+getAmountList()
 
 </script>
 <style lang='less' scoped>

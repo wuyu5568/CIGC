@@ -1,15 +1,16 @@
 import i18n from "@/language";
-import CryptoJS from 'crypto-js';
 
 const lang = (text: string, variables: any = {}) => {
-    let hashKey = text;
-    // console.log(hashKey)
-    let words = i18n.global.t(hashKey, variables);
-
-    if (words == hashKey) {
-        words = text;
+    if (!text) return ''
+    try {
+        const words = i18n.global.t(text, variables);
+        if (words == null || words === text) {
+            return text;
+        }
+        return String(words);
+    } catch (e) {
+        return text;
     }
-    return words;
   }
 
 export default lang

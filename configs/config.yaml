@@ -17,7 +17,7 @@ app:
   settle_cron: "0 0 * * *"
   settle_timezone: "Asia/Shanghai"
   allow_force_settle: true
-  full_downline: true
+  full_downline: false
   payout_enabled: false
   payout_cron: ""
   bsc_rpc: "https://bsc-dataseed.binance.org/"

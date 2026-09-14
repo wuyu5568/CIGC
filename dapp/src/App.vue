@@ -1,5 +1,5 @@
 <template>
-    <a-config-provider :theme="theme">
+    <a-config-provider :theme="theme" :locale="antdLocale">
         <div id="app">
             <router-view v-if="person.isLogin"></router-view>
             <Login v-else />
@@ -10,7 +10,13 @@
 import userPerson from "@/pinia/person";
 import userSystem from "@/pinia/system";
 import { theme as antdTheme } from 'ant-design-vue'
-import { onMounted, nextTick } from "vue"
+import zhCN from 'ant-design-vue/es/locale/zh_CN'
+import enUS from 'ant-design-vue/es/locale/en_US'
+import { onMounted, nextTick, computed } from "vue"
+import { useI18n } from 'vue-i18n'
+
+const { locale } = useI18n()
+const antdLocale = computed(() => locale.value === 'en' ? enUS : zhCN)
 
 const theme = {
   algorithm: antdTheme.darkAlgorithm

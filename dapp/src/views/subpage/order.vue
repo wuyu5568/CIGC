@@ -18,8 +18,9 @@
           <div class="order-product-info">
             <p>{{ item.title || item.four || '-' }}</p>
             <p>{{ item.goods || item.five || '-' }}</p>
-            <p>{{ item.release_days }} {{ lang('天') }}</p>
+            <p>{{ lang('套餐金额') }} {{ displayAmount(item.amount) }} USDT · {{ item.release_days }} {{ lang('天') }}</p>
             <div class="order-release">
+              <p>{{ lang('购买日期') }}：{{ item.purchase_date || item.paid_at || item.createdAt || item.created_at || '-' }}</p>
               <p>{{ lang('结算日期') }}：{{ item.settle_date || '-' }}</p>
               <p>{{ lang('今日释放 USDT') }}：{{ displayAmount(item.today_usdt) }}</p>
               <p>{{ lang('今日释放 ispay') }}：{{ displayAmount(item.today_ispay) }}</p>

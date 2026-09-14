@@ -566,16 +566,16 @@ func (uc *PlacementUseCase) subtreePaidMap(ctx context.Context) (map[uint64]deci
 		ids[p.UserID] = struct{}{}
 		ids[p.SponsorID] = struct{}{}
 	}
+	all, err := uc.users.ListAll(ctx)
+	if err != nil {
+		return nil, err
+	}
 	paid := map[uint64]decimal.Decimal{}
-	for id := range ids {
-		u, err := uc.users.FindByID(ctx, id)
-		if err != nil {
-			if errors.Is(err, ErrUserNotFound) {
-				continue
-			}
-			return nil, err
+	for _, u := range all {
+		if u == nil {
+			continue
 		}
-		paid[id] = money.Round(u.PaidAmount)
+		paid[u.ID] = money.Round(u.PaidAmount)
 	}
 	memo := map[uint64]decimal.Decimal{}
 	visiting := map[uint64]struct{}{}
@@ -613,6 +613,39 @@ func downlinePerson(u *User) *DownlinePerson {
 		Paid:      money.Round(u.PaidAmount),
 		CreatedAt: u.CreatedAt,
 	}
+}
+
+// InInviteSubtree 判断 target 是否为 ancestor 自己或其邀请后代。沿邀请链向上走，避免扫整棵邀请树。
+func (uc *PlacementUseCase) InInviteSubtree(ctx context.Context, ancestorID, targetID uint64) (bool, error) {
+	if ancestorID == 0 || targetID == 0 {
+		return false, nil
+	}
+	if ancestorID == targetID {
+		return true, nil
+	}
+	cur := targetID
+	seen := map[uint64]struct{}{}
+	for i := 0; i < maxSharedChainWalk; i++ {
+		if _, ok := seen[cur]; ok {
+			return false, nil
+		}
+		seen[cur] = struct{}{}
+		u, err := uc.users.FindByID(ctx, cur)
+		if err != nil {
+			if errors.Is(err, ErrUserNotFound) {
+				return false, nil
+			}
+			return false, err
+		}
+		if u == nil || u.InviterID == nil {
+			return false, nil
+		}
+		if *u.InviterID == ancestorID {
+			return true, nil
+		}
+		cur = *u.InviterID
+	}
+	return false, nil
 }
 
 // AdminDownline 管理端查看一人的邀请直推与左右安置，不递归整树。
@@ -700,4 +733,32 @@ func (uc *PlacementUseCase) adminDownline(ctx context.Context, userID uint64, ad
 		return nil, err
 	}
 	return view, nil
+}
+
+// UserDownline 用户端查看邀请直推与左右安置，只返回一层；address 仅允许自己或邀请/安置子树内的人。
+func (uc *PlacementUseCase) UserDownline(ctx context.Context, viewerID uint64, address string) (*DownlineView, error) {
+	if viewerID == 0 {
+		return nil, ErrUnauthorized
+	}
+	targetID := viewerID
+	address = strings.TrimSpace(address)
+	if address != "" {
+		id, err := uc.ResolveUserID(ctx, 0, address)
+		if err != nil {
+			return nil, err
+		}
+		inInvite, err := uc.InInviteSubtree(ctx, viewerID, id)
+		if err != nil {
+			return nil, err
+		}
+		inPlace, err := uc.InSubtree(ctx, viewerID, id)
+		if err != nil {
+			return nil, err
+		}
+		if !inInvite && !inPlace {
+			return nil, ErrForbidden
+		}
+		targetID = id
+	}
+	return uc.AdminDownline(ctx, targetID, "")
 }

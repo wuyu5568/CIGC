@@ -62,6 +62,7 @@ func registerHTTPRoutes(srv *khttp.Server, cfg *conf.Bootstrap, svc *service.App
 	srv.Handle("/api/app_server/withdraw_cancel", stdhttp.HandlerFunc(auth.RequireJWT(jwt, svc.CompatWithdrawCancel)))
 	srv.Handle("/api/app_server/withdraw_list", stdhttp.HandlerFunc(auth.RequireJWT(jwt, svc.CompatWithdrawList)))
 	srv.Handle("/api/app_server/recommend_list", stdhttp.HandlerFunc(auth.RequireJWT(jwt, svc.CompatRecommendList)))
+	srv.Handle("/api/app_server/downline", stdhttp.HandlerFunc(auth.RequireJWT(jwt, svc.CompatUserDownline)))
 	registerAdminRoutes(srv, "/api/admin_cigc", jwt, svc)
 	registerAdminRoutes(srv, "/api/admin_dhb", jwt, svc)
 }
