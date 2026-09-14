@@ -1,6 +1,6 @@
 <template>
     <PageView>
-        <a-card title="Web3商品列表">
+        <a-card>
             <div class="days-filter">
                 <div class="days-filter-left">
                     <span class="days-filter-label">释放天数：</span>
