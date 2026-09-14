@@ -31,7 +31,7 @@
     <div class="shop-list">
       <div class="investment-card" v-for="item in list" :key="item.id">
         <div class="card-head">
-          <div class="card-cover" v-if="item.image">
+          <div class="card-cover" v-if="item.image" @click="previewImage(item.image)">
             <img :src="item.image" alt="" />
           </div>
           <div class="card-head-text">
@@ -82,7 +82,7 @@
 import userPerson from "@/pinia/person";
 import lang from '@/i18n/index'
 import request from "@/tools/request";
-import { Pagination, showLoadingToast, closeToast, showFailToast, showSuccessToast } from "vant";
+import { Pagination, showImagePreview, showLoadingToast, closeToast, showFailToast, showSuccessToast } from "vant";
 import { useRouter } from 'vue-router'
 import { displayAmount } from '@/tools/amount'
 
@@ -133,6 +133,14 @@ const preview = $computed(() => {
 })
 
 const fmt = (v) => displayAmount(v)
+
+const previewImage = (src) => {
+  if (!src) return
+  showImagePreview({
+    images: [src],
+    closeable: true
+  })
+}
 
 const isAllowedDays = (value) => dayTabs.includes(Number(value))
 
@@ -318,6 +326,7 @@ const handleBack = () => {
             border-radius: 8px;
             overflow: hidden;
             background: #2d2d2d;
+            cursor: pointer;
             img {
               width: 100%;
               height: 100%;
