@@ -63,7 +63,7 @@
   <a-modal forceRender :maskClosable="false" v-model:open="isOpen" :footer="null" centered destroyOnClose :title="null">
     <div class="withdraw-dialog">
       <div class="dialog-main">
-        <div class="dialog-title">{{ lang('购买') }}：{{ pkgTitle }} · {{ amount }} USDT</div>
+        <div class="dialog-title">{{ lang('购买') }}：{{ amount }} USDT</div>
         <p class="hint">{{ lang('充值余额') }}：{{ displayAmount(userinfo.amountUsdt) }}</p>
         <p class="hint">{{ lang('释放天数') }}：{{ days }} {{ lang('天') }}</p>
         <div class="preview" v-if="days">
@@ -106,7 +106,6 @@ const tiers = $ref(defaultTiers)
 const price = $ref('')
 const isOpen = $ref(false)
 const amount = $ref('')
-const pkgTitle = $ref('')
 const days = $ref(null)
 
 const spot = $computed(() => price || userinfo.ispayPrice || '2000')
@@ -200,7 +199,6 @@ const openBuy = (item) => {
     return
   }
   amount = String(item.amount || '')
-  pkgTitle = item.name || item.desc || ''
   days = itemDays
   isOpen = true
 }
