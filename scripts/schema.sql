@@ -157,18 +157,19 @@ CREATE TABLE IF NOT EXISTS business_configs (
 ) ENGINE=InnoDB DEFAULT CHARSET utf8mb4;
 
 INSERT INTO business_configs (config_key, name, value, sort_order) VALUES
-('direct_rate', '直推奖励比例', '0.10', 10),
-('match_rate', '对碰奖励比例', '0.10', 20),
-('manage_rate', '管理奖励总池比例', '0.30', 30),
+('direct_rate', '直推奖比例', '0.10', 10),
+('match_rate', '对碰奖比例', '0.10', 20),
+('manage_rate', '管理奖比例', '0.30', 30),
 ('manage_generations', '管理奖代数', '3', 31),
-('min_withdraw_amount', 'USDT最低提现金额', '10', 40),
-('min_withdraw_amount_ispay', 'ISPAY最低提现金额', '0', 41),
-('withdraw_fee_rate', 'USDT提现手续费比例', '0.10', 45),
-('withdraw_daily_limit', 'USDT每日提现上限', '1000', 46),
-('withdraw_daily_limit_ispay', 'ISPAY每日提现上限', '1000', 47),
-('withdraw_fee_rate_ispay', 'ISPAY提现手续费比例', '0', 48),
-('ispay_price', '测试 ispay 现价（U）', '2000', 50),
-('overflow_clear_hours', '冻结清除时间（小时）', '72', 60)
+('min_withdraw_amount', 'USDT 单笔最低提现', '10', 40),
+('min_withdraw_amount_ispay', 'ISPAY 单笔最低提现', '0', 41),
+('withdraw_fee_rate', 'USDT 提现手续费', '0.10', 42),
+('withdraw_fee_rate_ispay', 'ISPAY 提现手续费', '0', 43),
+('withdraw_daily_limit', 'USDT 每日提现上限', '1000', 44),
+('withdraw_daily_limit_ispay', 'ISPAY 每日提现上限', '1000', 45),
+('ispay_price', 'ISPAY 测试现价', '2000', 50),
+('overflow_clear_hours', '冻结清除时间', '72', 60),
+('withdraw_enabled', '提现开关', '1', 70)
 ON DUPLICATE KEY UPDATE name = VALUES(name), value = VALUES(value), sort_order = VALUES(sort_order);
 
 -- 日结防重（金牛口径：上海自然日唯一占位）

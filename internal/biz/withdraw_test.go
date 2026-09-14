@@ -158,6 +158,7 @@ type memConfigs struct {
 	manageGens      string
 	ispayPrice      string
 	overflowHours   string
+	withdrawEnabled string
 	rows            []*BusinessConfig
 }
 
@@ -210,6 +211,10 @@ func (m *memConfigs) GetValue(_ context.Context, key string) (string, error) {
 	case ConfigOverflowHours:
 		if m.overflowHours != "" {
 			return m.overflowHours, nil
+		}
+	case ConfigWithdrawEnabled:
+		if m.withdrawEnabled != "" {
+			return m.withdrawEnabled, nil
 		}
 	}
 	for _, r := range m.rows {
@@ -264,6 +269,8 @@ func (m *memConfigs) SetValue(_ context.Context, id uint64, value string) error 
 				m.ispayPrice = value
 			case ConfigOverflowHours:
 				m.overflowHours = value
+			case ConfigWithdrawEnabled:
+				m.withdrawEnabled = value
 			}
 			return nil
 		}
@@ -486,6 +493,25 @@ func TestCreateWithdraw_IspayMinAndFee(t *testing.T) {
 	}
 	if !got.IspayBalance.Equal(decimal.RequireFromString("10")) || !got.FrozenIspay.Equal(decimal.RequireFromString("10")) {
 		t.Fatalf("freeze application amount, ispay=%s frozen=%s", got.IspayBalance, got.FrozenIspay)
+	}
+}
+
+func TestCreateWithdraw_ClosedByConfig(t *testing.T) {
+	users := newMemUsers()
+	u, err := users.Create(context.Background(), &User{
+		Address:          "0xabc",
+		AvailableBalance: decimal.RequireFromString("100"),
+		PaidAmount:       decimal.RequireFromString("1000"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	uc := NewWithdrawUseCase(users, users, &memLedger{}, newMemWithdraws(), &memConfigs{min: "10", withdrawEnabled: "0"}, NopTx{})
+	if uc.Enabled(context.Background()) {
+		t.Fatal("should be closed")
+	}
+	if _, err := uc.Create(context.Background(), u.ID, decimal.RequireFromString("20")); !errors.Is(err, ErrWithdrawClosed) {
+		t.Fatalf("closed: %v", err)
 	}
 }
 

@@ -297,6 +297,18 @@ func (uc *WithdrawUseCase) feeRateOf(ctx context.Context, asset string) decimal.
 	return money.Round(d)
 }
 
+func (uc *WithdrawUseCase) withdrawOpen(ctx context.Context) bool {
+	return ConfigIntValue(ctx, uc.configs, ConfigWithdrawEnabled, defaultWithdrawOn, 0, 1) == 1
+}
+
+// Enabled 提现申请开关；缺省或非法视为开放。
+func (uc *WithdrawUseCase) Enabled(ctx context.Context) bool {
+	if uc == nil {
+		return true
+	}
+	return uc.withdrawOpen(ctx)
+}
+
 func (uc *WithdrawUseCase) dailyLimitOf(ctx context.Context, asset string) decimal.Decimal {
 	key := ConfigWithdrawDaily
 	fallback := defaultWithdrawDaily
@@ -428,6 +440,9 @@ func (uc *WithdrawUseCase) CreateAsset(ctx context.Context, userID uint64, amoun
 	amount = money.Round(amount)
 	if !amount.IsPositive() {
 		return nil, ErrInvalidAmount
+	}
+	if !uc.withdrawOpen(ctx) {
+		return nil, ErrWithdrawClosed
 	}
 	min := uc.minAmountOf(ctx, asset)
 	if amount.LessThan(min) {

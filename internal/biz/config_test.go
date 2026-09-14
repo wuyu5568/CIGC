@@ -70,6 +70,17 @@ func TestNormalizeConfigValue(t *testing.T) {
 	if _, err := NormalizeConfigValue(ConfigOverflowHours, "721"); err != ErrConfigInvalid {
 		t.Fatalf("overflow 721: %v", err)
 	}
+	v, err = NormalizeConfigValue(ConfigWithdrawEnabled, "0")
+	if err != nil || v != "0" {
+		t.Fatalf("switch 0: %s %v", v, err)
+	}
+	v, err = NormalizeConfigValue(ConfigWithdrawEnabled, "1")
+	if err != nil || v != "1" {
+		t.Fatalf("switch 1: %s %v", v, err)
+	}
+	if _, err := NormalizeConfigValue(ConfigWithdrawEnabled, "2"); err != ErrConfigInvalid {
+		t.Fatalf("switch 2: %v", err)
+	}
 }
 
 func TestConfigMeta_Groups(t *testing.T) {

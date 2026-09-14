@@ -192,8 +192,12 @@ func (s *AppService) CompatUserInfo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var limits biz.WithdrawLimits
+	withdrawOn := "1"
 	if s.withdraw != nil {
 		limits = s.withdraw.UserLimits(r.Context(), user.ID)
+		if !s.withdraw.Enabled(r.Context()) {
+			withdrawOn = "0"
+		}
 	}
 	stats, err := s.userAssetStats(r.Context(), user.ID)
 	if err != nil {
@@ -220,6 +224,7 @@ func (s *AppService) CompatUserInfo(w http.ResponseWriter, r *http.Request) {
 		"withdrawDailyTwo":  decStr(limits.DailyTwo),
 		"withdrawTodayTwo":  decStr(limits.TodayTwo),
 		"withdrawRemainTwo": decStr(limits.RemainTwo),
+		"withdrawEnabled":   withdrawOn,
 		"locationNum":       "0",
 		"LocationList":      []any{},
 		"total":             decStr(vol.Total),
@@ -1679,6 +1684,8 @@ func withdrawUserMessage(err error) string {
 		return "手续费后到账必须大于0"
 	case errors.Is(err, biz.ErrWithdrawDailyCap):
 		return "超过每日提现上限"
+	case errors.Is(err, biz.ErrWithdrawClosed):
+		return "提现已关闭"
 	case errors.Is(err, biz.ErrWithdrawConflict):
 		return "该提现不能取消"
 	case errors.Is(err, biz.ErrForbidden):

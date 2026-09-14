@@ -13,6 +13,7 @@ const (
 	ConfigWithdrawFeeIspay = "withdraw_fee_rate_ispay"
 	ConfigManageGens       = "manage_generations"
 	ConfigOverflowHours    = "overflow_clear_hours"
+	ConfigWithdrawEnabled  = "withdraw_enabled"
 
 	defaultManageGens = 3
 	maxManageGens     = 10
@@ -20,6 +21,7 @@ const (
 	maxOverflowHours  = 720
 	defaultMinIspay   = "0"
 	defaultFeeIspay   = "0"
+	defaultWithdrawOn = 1
 )
 
 // editableConfigKeys 管理端允许改的键。
@@ -36,6 +38,7 @@ var editableConfigKeys = map[string]struct{}{
 	ConfigWithdrawDailyIspay: {},
 	ConfigIspayPrice:         {},
 	ConfigOverflowHours:      {},
+	ConfigWithdrawEnabled:    {},
 }
 
 // ConfigUseCase 管理端读改 business_configs。
@@ -148,6 +151,12 @@ func NormalizeConfigValue(key, raw string) (string, error) {
 			return "", ErrConfigInvalid
 		}
 		return decimal.NewFromInt(int64(n)).String(), nil
+	case ConfigWithdrawEnabled:
+		n := int(d.IntPart())
+		if !d.Equal(decimal.NewFromInt(int64(n))) || (n != 0 && n != 1) {
+			return "", ErrConfigInvalid
+		}
+		return decimal.NewFromInt(int64(n)).String(), nil
 	default:
 		return "", ErrConfigForbidden
 	}
@@ -207,6 +216,8 @@ func ConfigMeta(key string) (group, hint, effect string) {
 		return "价格", "测试用交易所现价（U）。拆一半 U / 一半 ispay 时用。", "立刻影响新入账、待释放展示。不是链上真实行情。"
 	case ConfigOverflowHours:
 		return "冻结", "封账（次日 0:00）后 N 小时清除超额/未激活冻结。默认 72。只减冻结、不转可提。", "只影响之后新封账的批次；已经盖了到期日的批次不变。"
+	case ConfigWithdrawEnabled:
+		return "提现", "1 开放提现申请，0 关闭。不影响已提交的单和链上打款开关。", "立刻生效；已提交的单仍可审核。"
 	default:
 		return "其他", "", "保存后生效。"
 	}
