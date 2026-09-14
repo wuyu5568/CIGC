@@ -20,9 +20,6 @@
         <a-modal :title="editId ? '修改商品' : '新增商品'" :visible="isShowJf" @ok="handleSave" :confirmLoading="confirmLoading"
             centered :closable="false" @cancel="isShowJf = false" :maskClosable="false" width="580px">
             <a-form style="margin-top: 20px">
-                <a-form-item label="商品名称" :label-col="labelCol" :wrapper-col="wrapperCol">
-                    <a-input v-model="name" placeholder="请输入商品名称" />
-                </a-form-item>
                 <a-form-item label="商品描述" :label-col="labelCol" :wrapper-col="wrapperCol">
                     <a-input v-model="desc" placeholder="请输入商品描述" />
                 </a-form-item>
@@ -91,7 +88,6 @@ export default {
             isShowJf: false,
             filterDays: 300,
             editId: 0,
-            name: '',
             desc: '',
             amount: undefined,
             dailyCap: undefined,
@@ -123,10 +119,6 @@ export default {
                         if (!v) return '-'
                         return <img src={v} style="display:block;height:40px;cursor:pointer;" onClick={() => this.showImage(v)} />
                     },
-                },
-                {
-                    title: '名称',
-                    dataIndex: 'name',
                 },
                 {
                     title: '描述',
@@ -189,7 +181,6 @@ export default {
         },
         resetForm() {
             this.editId = 0
-            this.name = ''
             this.desc = ''
             this.amount = undefined
             this.dailyCap = 0
@@ -205,7 +196,6 @@ export default {
         },
         openEdit(row) {
             this.editId = row.id
-            this.name = row.name || ''
             this.desc = row.desc || ''
             this.amount = Number(row.amount)
             this.dailyCap = Number(row.daily_cap || 0)
@@ -251,7 +241,6 @@ export default {
         payload(image) {
             const data = {
                 days: this.days,
-                name: this.name,
                 desc: this.desc,
                 amount: this.amount,
                 daily_cap: this.dailyCap,
@@ -263,7 +252,6 @@ export default {
             return data
         },
         handleSave() {
-            if (!this.name) return this.$message.info('请输入商品名称')
             if (!this.desc) return this.$message.info('请输入商品描述')
             if (!this.amount) return this.$message.info('请输入商品金额')
             if (![300, 600, 750].includes(Number(this.days))) return this.$message.info('请选择释放天数')
