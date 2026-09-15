@@ -8,12 +8,6 @@
     @click-left="handleBack"
     @click-right="router.push('order/1')"
   >
-    <template #right>
-      <span class="nav-order">
-        <van-icon name="orders-o" />
-        {{ lang('商城订单') }}
-      </span>
-    </template>
   </van-nav-bar>
   <div class="page-main" v-if="item.id">
     <div class="hero" v-if="item.image">
@@ -33,14 +27,18 @@
         <span class="detail-value">{{ fmt(item.daily_cap) }} USDT</span>
       </li>
     </ul>
-    <div class="goods-html" v-if="item.detail" v-html="item.detail"></div>
+      <div class="goods-detail">
+        <span>{{ lang('商品详情') }}</span>
+      </div>
+      <div class="goods-html" v-if="item.detail" v-html="item.detail"></div>
+      <p class="detail-empty" v-else>{{ lang('暂无详情') }}</p>
     <div class="buy-pad"></div>
   </div>
   <van-empty v-else-if="!loading" :description="lang('商品不存在')" />
-  <div class="buy-bar" v-if="item.id">
+  <!-- <div class="buy-bar" v-if="item.id">
     <div class="buy-price">{{ fmt(item.amount) }} <em>USDT</em></div>
     <button class="purchase-btn" :disabled="loading" @click="isOpen = true">{{ lang('购买') }}</button>
-  </div>
+  </div> -->
   <Web3BuyModal
     v-model="isOpen"
     :goods-id="item.id"
@@ -170,6 +168,39 @@ fetchPrice()
           font-size: 14px;
         }
       }
+    }
+    .detail-section {
+      margin-top: 4px;
+      background: rgba(34, 34, 34, 0.88);
+      border: 1px solid #333;
+      border-radius: 12px;
+      padding: 14px;
+    }
+    .goods-detail {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 0 12px;
+      padding-bottom: 10px;
+      color: #fff;
+      font-size: 15px;
+      font-weight: 600;
+      line-height: 1;
+      &::before {
+        content: '';
+        width: 3px;
+        height: 14px;
+        border-radius: 2px;
+        background: #cab255;
+        flex-shrink: 0;
+      }
+    }
+    .detail-empty {
+      margin: 0;
+      padding: 18px 0 8px;
+      color: #8a8a8a;
+      font-size: 13px;
+      text-align: center;
     }
     .goods-html {
       color: #e0e0e0;

@@ -2,24 +2,30 @@
   <a-modal forceRender :maskClosable="false" v-model:open="open" :footer="null" centered destroyOnClose :title="null">
     <div class="withdraw-dialog">
       <div class="dialog-main">
-        <div class="dialog-title">{{ lang('购买') }}：{{ fmt(amount) }} USDT</div>
+        <div class="dialog-title">{{ lang('购买') }}：{{ fmt(totalAmount) }} USDT</div>
+        <ul class="cart-lines" v-if="lines.length > 1 || (lines[0] && lines[0].qty > 1)">
+          <li v-for="line in lines" :key="line.id">
+            <span>{{ line.name || (lang('商品') + ' #' + line.id) }} × {{ line.qty }}</span>
+            <em>{{ fmt(Number(line.amount) * line.qty) }} USDT</em>
+          </li>
+        </ul>
         <p class="hint">{{ lang('充值余额') }}：{{ displayAmount(userinfo.amountUsdt) }}</p>
-        <p class="hint">{{ lang('日封顶') }}：{{ fmt(dailyCap) }} USDT</p>
-        <ul class="days-tabs">
-          <li
+        <p class="hint cap-hint">{{ lang('日封顶') }}：{{ fmt(dailyCap) }} USDT</p>
+        <p class="hint days-label">{{ lang('请选择释放天数') }}</p>
+        <van-radio-group v-model="days" class="days-tabs" direction="horizontal" checked-color="#cab255" icon-size="16px">
+          <van-radio
             v-for="d in dayTabs"
             :key="d"
-            :class="{ active: Number(days) === d }"
-            @click="days = d"
-          >{{ d }}{{ lang('天') }}</li>
-        </ul>
+            :name="d"
+          >{{ d }}{{ lang('天') }}</van-radio>
+        </van-radio-group>
         <div class="preview" v-if="days">
           <p>{{ lang('释放天数') }}：{{ days }} {{ lang('天') }}</p>
           <p>购币 {{ preview.coins }} · 日释放 {{ preview.dailyCoins }}</p>
           <p>每日约 {{ preview.usdt }} U + {{ preview.ispay }} ispay（{{ lang('现价') }} {{ spot }}）</p>
         </div>
       </div>
-      <a-button class="withdraw-btn" :disabled="buying || !days || !goodsId" size="large" @click="handleBuy" type="primary">
+      <a-button class="withdraw-btn" :disabled="buying || !days || !buyJobs.length" size="large" @click="handleBuy" type="primary">
         {{ lang('确定') }}
       </a-button>
     </div>
@@ -45,9 +51,10 @@ const props = defineProps({
   modelValue: { type: Boolean, default: false },
   goodsId: { type: [Number, String], default: 0 },
   amount: { type: [Number, String], default: '' },
-  spot: { type: [Number, String], default: '2000' }
+  spot: { type: [Number, String], default: '2000' },
+  items: { type: Array, default: () => [] }
 })
-const emit = defineEmits(['update:modelValue', 'success'])
+const emit = defineEmits(['update:modelValue', 'success', 'progress'])
 
 const person = userPerson();
 const userinfo = computed(() => person.userinfo);
@@ -59,12 +66,45 @@ let days = $ref(300)
 let buying = $ref(false)
 const tiers = defaultTiers
 
-const dailyCap = $computed(() => capForAmount(props.amount))
+const lines = $computed(() => {
+  if (Array.isArray(props.items) && props.items.length) {
+    return props.items
+      .map((x) => ({
+        id: Number(x.id),
+        name: x.name || x.desc || '',
+        amount: String(x.amount || '0'),
+        qty: Math.max(1, Number(x.qty) || 1)
+      }))
+      .filter((x) => x.id > 0)
+  }
+  const id = Number(props.goodsId)
+  if (id > 0) {
+    return [{ id, name: '', amount: String(props.amount || '0'), qty: 1 }]
+  }
+  return []
+})
+
+const buyJobs = $computed(() => {
+  const jobs = []
+  for (const line of lines) {
+    for (let i = 0; i < line.qty; i++) jobs.push(line.id)
+  }
+  return jobs
+})
+
+const totalAmount = $computed(() => {
+  if (lines.length) {
+    return lines.reduce((s, x) => s + Number(x.amount || 0) * Number(x.qty || 0), 0)
+  }
+  return Number(props.amount || 0)
+})
+
+const dailyCap = $computed(() => capForAmount(totalAmount))
 
 const preview = $computed(() => {
   const t = tiers.find((x) => Number(x.days) === Number(days))
   const buy = Number(t?.price || 0)
-  const amt = Number(props.amount || 0)
+  const amt = Number(totalAmount || 0)
   const d = Number(days || 0)
   const sp = Number(props.spot || 0)
   if (!buy || !amt || !d || !sp) {
@@ -82,29 +122,43 @@ const preview = $computed(() => {
 const fmt = (v) => displayAmount(v)
 
 const handleBuy = async () => {
-  if (buying || !days || !props.goodsId) return
+  if (buying || !days || !buyJobs.length) return
   buying = true
   showLoadingToast()
-  await request.post("app_server/buy", {
-    id: Number(props.goodsId),
-    days,
-    release_days: days
-  }).then((res) => {
-    closeToast()
-    if (res.status === 'ok') {
-      showSuccessToast(lang('购买成功'))
-      person.getUser()
-      open.value = false
-      emit('success')
-    } else {
-      showFailToast(res.status || lang('购买失败'))
+  const done = []
+  try {
+    for (const id of buyJobs) {
+      const res = await request.post("app_server/buy", {
+        id: Number(id),
+        days,
+        release_days: days
+      })
+      if (res.status !== 'ok') {
+        closeToast()
+        showFailToast(res.status || lang('购买失败'))
+        if (done.length) {
+          person.getUser()
+          emit('progress', done)
+        }
+        return
+      }
+      done.push(id)
     }
-  }).catch(() => {
+    closeToast()
+    showSuccessToast(lang('购买成功'))
+    person.getUser()
+    open.value = false
+    emit('success')
+  } catch {
     closeToast()
     showFailToast(lang('购买失败'))
-  }).finally(() => {
+    if (done.length) {
+      person.getUser()
+      emit('progress', done)
+    }
+  } finally {
     buying = false
-  })
+  }
 }
 </script>
 <style lang='less' scoped>
@@ -112,10 +166,12 @@ const handleBuy = async () => {
   display: flex;
   flex-direction: column;
   align-items: center;
+  color: #e8e8e8;
   .dialog-title {
     width: 100%;
-    font-size: 14px;
-    font-weight: 500;
+    font-size: 16px;
+    font-weight: 600;
+    color: #fff;
   }
   .dialog-main {
     width: 100%;
@@ -125,33 +181,77 @@ const handleBuy = async () => {
     gap: 6px;
   }
   .preview, .hint {
-    font-size: 12px;
-    color: #666;
+    font-size: 13px;
+    color: #c8c8c8;
     line-height: 1.6;
+  }
+  .cap-hint {
+    color: #cab255;
+    font-weight: 600;
+  }
+  .cart-lines {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    li {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 13px;
+      color: #c8c8c8;
+      line-height: 1.6;
+      em {
+        font-style: normal;
+        color: #cab255;
+        font-weight: 600;
+      }
+    }
+  }
+  .days-label {
+    margin: 8px 0 0;
+    color: #e0e0e0;
+    font-weight: 600;
   }
   .days-tabs {
     display: flex;
-    gap: 6px;
+    width: 100%;
+    margin: 0 0 4px;
     padding: 4px;
-    margin: 8px 0 4px;
-    background: rgba(26, 26, 26, 0.08);
-    border: 1px solid #eee;
+    background: rgba(34, 34, 34, 0.88);
+    border: 1px solid #333;
     border-radius: 12px;
-    li {
-      flex: 1;
-      height: 36px;
+    :deep(.van-radio-group) {
       display: flex;
-      align-items: center;
+      width: 100%;
+    }
+    :deep(.van-radio) {
+      flex: 1;
+      margin: 0;
+      padding: 8px 4px;
       justify-content: center;
-      color: #666;
-      font-size: 14px;
       border-radius: 8px;
-      cursor: pointer;
-      &.active {
-        background: #cab255;
-        color: #121212;
-        font-weight: 600;
-      }
+    }
+    :deep(.van-radio__label) {
+      margin-left: 4px;
+      color: #c8c8c8;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    :deep(.van-radio__icon .van-icon) {
+      background-color: transparent;
+      border-color: #666;
+    }
+    :deep(.van-radio__icon--checked .van-icon) {
+      background-color: #cab255;
+      border-color: #cab255;
+      color: #121212;
+    }
+    :deep(.van-radio__icon--checked + .van-radio__label) {
+      color: #cab255;
+      font-weight: 600;
+    }
+    :deep(.van-radio:has(.van-radio__icon--checked)) {
+      background: rgba(202, 178, 85, 0.12);
     }
   }
   .withdraw-btn {

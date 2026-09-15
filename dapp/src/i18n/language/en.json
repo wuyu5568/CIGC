@@ -322,6 +322,7 @@
   "天": "Days",
   "商品信息错误": "Invalid Product",
   "商品详情": "Product Detail",
+  "暂无详情": "No details yet",
   "商品不存在": "Product not found",
   "日封顶": "Daily Cap",
   "单价": "Price",
@@ -366,5 +367,10 @@
   "当前": "You",
   "空位": "Empty",
   "套餐内容": "Package",
-  "点击下级查看下一层": "Tap a member to open the next level"
+  "点击下级查看下一层": "Tap a member to open the next level",
+  "加入购物车": "Add to Cart",
+  "购物车": "Cart",
+  "去结算": "Checkout",
+  "购物车为空": "Cart is empty",
+  "清空": "Clear"
 }
