@@ -49,6 +49,20 @@ export default {
                     dataIndex: 'one',
                 },
                 {
+                    title: '商品',
+                    dataIndex: 'goods',
+                    width: 240,
+                    customRender: (v) => {
+                        const text = v || '-'
+                        return (
+                            <div
+                                title={text}
+                                style="width:240px;max-width:240px;overflow:hidden;word-break:break-all;white-space:normal;line-height:1.4;"
+                            >{text}</div>
+                        )
+                    },
+                },
+                {
                     title: '收件人',
                     dataIndex: 'four',
                 },
