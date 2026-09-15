@@ -125,8 +125,7 @@ fetchPrice()
       img {
         display: block;
         width: 100%;
-        max-height: 280px;
-        object-fit: cover;
+        height: auto;
       }
     }
     .title-block {
