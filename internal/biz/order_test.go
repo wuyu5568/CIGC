@@ -418,6 +418,183 @@ func TestBuyWithRechargeGoods_UsesPackageAmount(t *testing.T) {
 	}
 }
 
+func TestBuyCartWithRecharge_SumsAndCaps(t *testing.T) {
+	ResetRuntimeCapTiers()
+	users := newMemUsers()
+	u, err := users.Create(context.Background(), &User{
+		Address: "0xabc", RechargeBalance: decimal.RequireFromString("5000"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ords := newMemOrders(users)
+	uc := NewOrderUseCase(&memPackages{rows: []*Package{
+		{ID: 1, Amount: decimal.RequireFromString("1000"), Title: "牙刷挖矿", Enabled: true},
+		{ID: 3, Amount: decimal.RequireFromString("2000"), Title: "节点套餐", Enabled: true},
+	}}, ords, users, users, &memLedger{})
+	o, err := uc.BuyCartWithRecharge(context.Background(), u.ID, []CartItem{
+		{GoodsID: 1, Qty: 2},
+		{GoodsID: 1, Qty: 1},
+		{GoodsID: 3, Qty: 1},
+	}, 300)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.Status != OrderPaid || !o.Amount.Equal(decimal.RequireFromString("5000")) {
+		t.Fatalf("order %+v", o)
+	}
+	if o.PackageID != 3 {
+		t.Fatalf("package_id=%d", o.PackageID)
+	}
+	if o.TitleSnapshot != "牙刷挖矿×3、节点套餐" {
+		t.Fatalf("title=%s", o.TitleSnapshot)
+	}
+	list, err := ords.ListByUser(context.Background(), u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("orders=%d", len(list))
+	}
+	got, err := users.FindByID(context.Background(), u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.RechargeBalance.IsZero() {
+		t.Fatalf("recharge=%s", got.RechargeBalance)
+	}
+	if !got.CapEffective.Equal(decimal.RequireFromString("1800")) {
+		t.Fatalf("cap=%s", got.CapEffective)
+	}
+}
+
+func TestBuyCartWithRecharge_ThreeThousandCaps1800(t *testing.T) {
+	ResetRuntimeCapTiers()
+	users := newMemUsers()
+	u, err := users.Create(context.Background(), &User{
+		Address: "0xabc", RechargeBalance: decimal.RequireFromString("5000"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ords := newMemOrders(users)
+	uc := NewOrderUseCase(&memPackages{rows: []*Package{
+		{ID: 1, Amount: decimal.RequireFromString("1000"), Title: "牙刷挖矿", Enabled: true},
+	}}, ords, users, users, &memLedger{})
+	o, err := uc.BuyCartWithRecharge(context.Background(), u.ID, []CartItem{
+		{GoodsID: 1, Qty: 3},
+	}, 300)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !o.Amount.Equal(decimal.RequireFromString("3000")) || o.Status != OrderPaid {
+		t.Fatalf("%+v", o)
+	}
+	if o.TitleSnapshot != "牙刷挖矿×3" {
+		t.Fatalf("title=%s", o.TitleSnapshot)
+	}
+	list, err := ords.ListByUser(context.Background(), u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("orders=%d", len(list))
+	}
+	got, err := users.FindByID(context.Background(), u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.RechargeBalance.Equal(decimal.RequireFromString("2000")) {
+		t.Fatalf("recharge=%s", got.RechargeBalance)
+	}
+	if !got.CapEffective.Equal(decimal.RequireFromString("1800")) {
+		t.Fatalf("cap=%s", got.CapEffective)
+	}
+}
+
+func TestBuyCartWithRecharge_InsufficientFailsWholeCart(t *testing.T) {
+	ResetRuntimeCapTiers()
+	users := newMemUsers()
+	u, err := users.Create(context.Background(), &User{
+		Address: "0xabc", RechargeBalance: decimal.RequireFromString("2000"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ords := newMemOrders(users)
+	uc := NewOrderUseCase(&memPackages{rows: []*Package{
+		{ID: 1, Amount: decimal.RequireFromString("1000"), Title: "牙刷挖矿", Enabled: true},
+	}}, ords, users, users, &memLedger{})
+	if _, err := uc.BuyCartWithRecharge(context.Background(), u.ID, []CartItem{
+		{GoodsID: 1, Qty: 3},
+	}, 300); err != ErrInsufficientBalance {
+		t.Fatalf("got %v", err)
+	}
+	got, err := users.FindByID(context.Background(), u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.RechargeBalance.Equal(decimal.RequireFromString("2000")) {
+		t.Fatalf("recharge=%s", got.RechargeBalance)
+	}
+	list, err := ords.ListByUser(context.Background(), u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("orders=%d", len(list))
+	}
+}
+
+func TestBuyWithRechargeGoods_SingleBuyUnchanged(t *testing.T) {
+	ResetRuntimeCapTiers()
+	users := newMemUsers()
+	u, err := users.Create(context.Background(), &User{
+		Address: "0xabc", RechargeBalance: decimal.RequireFromString("2000"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	uc := NewOrderUseCase(&memPackages{rows: []*Package{{
+		ID: 9, Amount: decimal.RequireFromString("1000"), Title: "牙刷", Enabled: true,
+	}}}, newMemOrders(users), users, users, &memLedger{})
+	o, err := uc.BuyWithRechargeGoods(context.Background(), u.ID, 9, 300)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.PackageID != 9 || !o.Amount.Equal(decimal.RequireFromString("1000")) {
+		t.Fatalf("%+v", o)
+	}
+	got, err := users.FindByID(context.Background(), u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.RechargeBalance.Equal(decimal.RequireFromString("1000")) {
+		t.Fatalf("recharge=%s", got.RechargeBalance)
+	}
+	if !got.CapEffective.Equal(decimal.RequireFromString("600")) {
+		t.Fatalf("cap=%s", got.CapEffective)
+	}
+}
+
+func TestBuyCartWithRecharge_DisabledGoods(t *testing.T) {
+	users := newMemUsers()
+	u, err := users.Create(context.Background(), &User{
+		Address: "0xabc", RechargeBalance: decimal.RequireFromString("5000"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	uc := NewOrderUseCase(&memPackages{rows: []*Package{
+		{ID: 1, Amount: decimal.RequireFromString("1000"), Title: "下架", Enabled: false},
+	}}, newMemOrders(users), users, users, &memLedger{})
+	if _, err := uc.BuyCartWithRecharge(context.Background(), u.ID, []CartItem{
+		{GoodsID: 1, Qty: 1},
+	}, 300); err != ErrPackageDisabled {
+		t.Fatalf("got %v", err)
+	}
+}
+
 func TestBuyWithRecharge_Insufficient(t *testing.T) {
 	users := newMemUsers()
 	u, err := users.Create(context.Background(), &User{Address: "0xabc"})

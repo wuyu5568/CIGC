@@ -30,6 +30,20 @@ export function capForAmount(amount, tiers) {
   return String(list[list.length - 1]?.daily_cap ?? '0')
 }
 
+export function rangeForAmount(amount, tiers) {
+  const a = Number(amount)
+  if (!Number.isFinite(a) || a <= 0) return ''
+  const list = Array.isArray(tiers) && tiers.length ? tiers : (cachedTiers || DEFAULT_CAP_TIERS)
+  let from = '0'
+  for (let i = 0; i < list.length; i++) {
+    const max = String(list[i].max_amount || '').trim()
+    if (!max) return `${from} 及以上`
+    if (a < Number(max)) return `${from} ≤ 金额 < ${max}`
+    from = max
+  }
+  return `${from} 及以上`
+}
+
 export function currentCapTiers() {
   return cachedTiers || DEFAULT_CAP_TIERS
 }

@@ -10,7 +10,7 @@
           </li>
         </ul>
         <p class="hint">{{ lang('充值余额') }}：{{ displayAmount(userinfo.amountUsdt) }}</p>
-        <p class="hint cap-hint">{{ lang('日封顶') }}：{{ fmt(dailyCap) }} USDT</p>
+        <p class="hint cap-hint">{{ lang('日封顶') }}：{{ fmt(dailyCap) }} USDT<span v-if="capRange">（{{ capRange }}）</span></p>
         <p class="hint days-label">{{ lang('请选择释放天数') }}</p>
         <van-radio-group v-model="days" class="days-tabs" direction="horizontal" checked-color="#cab255" icon-size="16px">
           <van-radio
@@ -25,7 +25,7 @@
           <p>每日约 {{ preview.usdt }} U + {{ preview.ispay }} ispay（{{ lang('现价') }} {{ spot }}）</p>
         </div>
       </div>
-      <a-button class="withdraw-btn" :disabled="buying || !days || !buyJobs.length" size="large" @click="handleBuy" type="primary">
+      <a-button class="withdraw-btn" :disabled="buying || !days || !lines.length" size="large" @click="handleBuy" type="primary">
         {{ lang('确定') }}
       </a-button>
     </div>
@@ -38,7 +38,7 @@ import lang from '@/i18n/index'
 import request from "@/tools/request";
 import { showLoadingToast, closeToast, showFailToast, showSuccessToast } from "vant";
 import { displayAmount } from '@/tools/amount'
-import { capForAmount, loadCapTiers, currentCapTiers } from '@/tools/dailyCap'
+import { capForAmount, rangeForAmount, loadCapTiers, currentCapTiers } from '@/tools/dailyCap'
 
 const dayTabs = [300, 600, 750]
 const defaultTiers = [
@@ -88,12 +88,16 @@ const lines = $computed(() => {
   return []
 })
 
-const buyJobs = $computed(() => {
-  const jobs = []
-  for (const line of lines) {
-    for (let i = 0; i < line.qty; i++) jobs.push(line.id)
+const buyPayload = $computed(() => {
+  if (Array.isArray(props.items) && props.items.length) {
+    return {
+      items: lines.map((x) => ({ id: x.id, qty: x.qty })),
+      days,
+      release_days: days
+    }
   }
-  return jobs
+  if (!lines.length) return null
+  return { id: Number(lines[0].id), days, release_days: days }
 })
 
 const totalAmount = $computed(() => {
@@ -104,6 +108,7 @@ const totalAmount = $computed(() => {
 })
 
 const dailyCap = $computed(() => capForAmount(totalAmount, capTiers))
+const capRange = $computed(() => rangeForAmount(totalAmount, capTiers))
 
 const preview = $computed(() => {
   const t = tiers.find((x) => Number(x.days) === Number(days))
@@ -126,27 +131,15 @@ const preview = $computed(() => {
 const fmt = (v) => displayAmount(v)
 
 const handleBuy = async () => {
-  if (buying || !days || !buyJobs.length) return
+  if (buying || !days || !lines.length || !buyPayload) return
   buying = true
   showLoadingToast()
-  const done = []
   try {
-    for (const id of buyJobs) {
-      const res = await request.post("app_server/buy", {
-        id: Number(id),
-        days,
-        release_days: days
-      })
-      if (res.status !== 'ok') {
-        closeToast()
-        showFailToast(res.status || lang('购买失败'))
-        if (done.length) {
-          person.getUser()
-          emit('progress', done)
-        }
-        return
-      }
-      done.push(id)
+    const res = await request.post("app_server/buy", buyPayload)
+    if (res.status !== 'ok') {
+      closeToast()
+      showFailToast(res.status || lang('购买失败'))
+      return
     }
     closeToast()
     showSuccessToast(lang('购买成功'))
@@ -156,10 +149,6 @@ const handleBuy = async () => {
   } catch {
     closeToast()
     showFailToast(lang('购买失败'))
-    if (done.length) {
-      person.getUser()
-      emit('progress', done)
-    }
   } finally {
     buying = false
   }

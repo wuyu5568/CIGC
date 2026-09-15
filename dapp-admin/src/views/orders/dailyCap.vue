@@ -2,7 +2,7 @@
     <PageView>
         <a-card title="日封顶档位">
             <div class="toolbar">
-                <span class="hint">金额小于「合计上限」时套该行日封顶；最后一行上限留空，表示以上全部。保存后立刻影响结算与商城购物车展示。</span>
+                <span class="hint">每一档是一个金额区间：合计落在该区间内，就用这一行的日封顶。最后一档没有上限。保存后立刻影响结算和商城展示。</span>
                 <div>
                     <a-button @click="addRow">添加档位</a-button>
                     <a-button type="primary" :loading="saving" style="margin-left:8px;" @click="save">保存</a-button>
@@ -20,7 +20,7 @@
             <div class="preview">
                 <span>试算合计</span>
                 <a-input-number v-model="sample" :min="0" style="width:160px;margin:0 8px;" />
-                <span>USDT → 日封顶 {{ sampleCap }} USDT</span>
+                <span>USDT → {{ sampleRange }}，日封顶 {{ sampleCap }} USDT</span>
             </div>
         </a-card>
     </PageView>
@@ -28,6 +28,35 @@
 
 <script type="text/jsx">
 import Gai from '../../api/Gai'
+
+const trimNum = (v) => {
+    const s = String(v == null ? '' : v).trim()
+    if (!s) return ''
+    if (!/^-?\d+(\.\d+)?$/.test(s)) return s
+    return s.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '')
+}
+
+const prevMax = (rows, index) => {
+    for (let i = index - 1; i >= 0; i--) {
+        const max = trimNum(rows[i] && rows[i].max_amount)
+        if (max) return max
+    }
+    return '0'
+}
+
+const rangeForAmount = (amount, tiers) => {
+    const a = Number(amount)
+    if (!Number.isFinite(a) || a <= 0) return '—'
+    const list = Array.isArray(tiers) ? tiers : []
+    let from = '0'
+    for (let i = 0; i < list.length; i++) {
+        const max = trimNum(list[i] && list[i].max_amount)
+        if (!max) return `${from} 及以上`
+        if (a < Number(max)) return `${from} ≤ 金额 < ${max}`
+        from = max
+    }
+    return list.length ? `${from} 及以上` : '—'
+}
 
 const capForTiers = (amount, tiers) => {
     const a = Number(amount)
@@ -57,27 +86,32 @@ export default {
                     customRender: (v, row, index) => index + 1,
                 },
                 {
-                    title: '合计上限（不含）',
-                    dataIndex: 'max_amount',
+                    title: '金额区间',
                     customRender: (v, row, index) => {
-                        return <a-input value={row.max_amount} placeholder="最后一档留空" onInput={(e) => this.setField(index, 'max_amount', e.target.value)} />
+                        const from = prevMax(this.rows, index)
+                        const unbounded = !String(row.max_amount || '').trim()
+                        if (unbounded) {
+                            return <span>{from} 及以上</span>
+                        }
+                        return (
+                            <div style="display:flex;align-items:center;white-space:nowrap;">
+                                <span style="margin-right:8px;">{from} ≤ 金额 &lt;</span>
+                                <a-input
+                                    value={row.max_amount}
+                                    placeholder="上限"
+                                    style="width:140px"
+                                    onInput={(e) => this.setField(index, 'max_amount', e.target.value)}
+                                />
+                            </div>
+                        )
                     },
                 },
                 {
                     title: '日封顶',
                     dataIndex: 'daily_cap',
+                    width: 180,
                     customRender: (v, row, index) => {
                         return <a-input value={row.daily_cap} placeholder="日封顶" onInput={(e) => this.setField(index, 'daily_cap', e.target.value)} />
-                    },
-                },
-                {
-                    title: '规则预览',
-                    customRender: (v, row) => {
-                        const cap = row.daily_cap || '0'
-                        if (!String(row.max_amount || '').trim()) {
-                            return <span>合计达到以上档位 → {cap}</span>
-                        }
-                        return <span>合计 &lt; {row.max_amount} → {cap}</span>
                     },
                 },
                 {
@@ -94,6 +128,9 @@ export default {
     computed: {
         sampleCap() {
             return capForTiers(this.sample, this.rows)
+        },
+        sampleRange() {
+            return rangeForAmount(this.sample, this.rows)
         },
     },
     activated() {

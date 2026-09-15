@@ -53,6 +53,19 @@ type Order struct {
 	UpdatedAt     time.Time
 }
 
+// CartItem 购物车一行：商品 id 与数量。金额一律按服务端单价 × qty。
+type CartItem struct {
+	GoodsID uint64
+	Qty     int
+}
+
+const (
+	maxCartDistinct    = 50
+	maxCartQtyPerGoods = 999
+	titleSnapshotMax   = 128
+	goodsSnapshotMax   = 512
+)
+
 // FormatOrderNo 旧单缺省编号：C + 6 位 ID。新单用 RandomOrderNo。
 func FormatOrderNo(id uint64) string {
 	return fmt.Sprintf("C%06d", id)
@@ -574,24 +587,141 @@ func (uc *OrderUseCase) BuyWithRechargeGoods(ctx context.Context, userID, goodsI
 	return uc.buyPackageWithRecharge(ctx, userID, pkg, days)
 }
 
+// BuyCartWithRecharge 购物车一次下单：按商品单价汇总，扣合计充值余额，落 1 笔 paid 订单。
+func (uc *OrderUseCase) BuyCartWithRecharge(ctx context.Context, userID uint64, items []CartItem, days int) (*Order, error) {
+	if !ValidReleaseDays(days) {
+		return nil, ErrInvalidReleaseDays
+	}
+	if _, err := uc.users.FindByID(ctx, userID); err != nil {
+		return nil, err
+	}
+	merged, err := mergeCartItems(items)
+	if err != nil {
+		return nil, err
+	}
+	var (
+		total  decimal.Decimal
+		head   *Package
+		labels = make([]string, 0, len(merged))
+	)
+	for _, it := range merged {
+		pkg, err := uc.packages.FindByID(ctx, it.GoodsID)
+		if err != nil {
+			return nil, err
+		}
+		if pkg == nil || !pkg.Enabled {
+			return nil, ErrPackageDisabled
+		}
+		lineAmt := money.Round(pkg.Amount.Mul(decimal.NewFromInt(int64(it.Qty))))
+		if !lineAmt.IsPositive() {
+			return nil, ErrInvalidAmount
+		}
+		total = total.Add(lineAmt)
+		if head == nil || pkg.Amount.GreaterThan(head.Amount) {
+			head = pkg
+		}
+		labels = append(labels, cartLineLabel(pkg, it.Qty))
+	}
+	total = money.Round(total)
+	if head == nil || !total.IsPositive() {
+		return nil, ErrInvalidAmount
+	}
+	snap := strings.Join(labels, "、")
+	return uc.payRechargeOrder(ctx, userID, head, total, snap, snap, days)
+}
+
+func mergeCartItems(items []CartItem) ([]CartItem, error) {
+	if len(items) == 0 {
+		return nil, ErrInvalidAmount
+	}
+	qtyByID := make(map[uint64]int, len(items))
+	order := make([]uint64, 0, len(items))
+	for _, it := range items {
+		if it.GoodsID == 0 {
+			return nil, ErrPackageNotFound
+		}
+		if it.Qty <= 0 {
+			return nil, ErrInvalidAmount
+		}
+		if _, ok := qtyByID[it.GoodsID]; !ok {
+			if len(order) >= maxCartDistinct {
+				return nil, ErrInvalidAmount
+			}
+			order = append(order, it.GoodsID)
+		}
+		next := qtyByID[it.GoodsID] + it.Qty
+		if next > maxCartQtyPerGoods {
+			return nil, ErrInvalidAmount
+		}
+		qtyByID[it.GoodsID] = next
+	}
+	out := make([]CartItem, 0, len(order))
+	for _, id := range order {
+		out = append(out, CartItem{GoodsID: id, Qty: qtyByID[id]})
+	}
+	return out, nil
+}
+
+func cartLineLabel(pkg *Package, qty int) string {
+	name := ""
+	if pkg != nil {
+		name = strings.TrimSpace(pkg.Title)
+		if name == "" {
+			name = strings.TrimSpace(pkg.GoodsDesc)
+		}
+		if name == "" {
+			name = fmt.Sprintf("#%d", pkg.ID)
+		}
+	}
+	if qty > 1 {
+		return fmt.Sprintf("%s×%d", name, qty)
+	}
+	return name
+}
+
+func clipRunes(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if n <= 0 {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n])
+}
+
 func (uc *OrderUseCase) buyPackageWithRecharge(ctx context.Context, userID uint64, pkg *Package, days int) (*Order, error) {
+	if pkg == nil {
+		return nil, ErrPackageDisabled
+	}
+	return uc.payRechargeOrder(ctx, userID, pkg, pkg.Amount, pkg.Title, pkg.GoodsDesc, days)
+}
+
+func (uc *OrderUseCase) payRechargeOrder(ctx context.Context, userID uint64, pkg *Package, amount decimal.Decimal, title, desc string, days int) (*Order, error) {
 	if pkg == nil || !pkg.Enabled {
 		return nil, ErrPackageDisabled
 	}
+	amount = money.Round(amount)
+	if !amount.IsPositive() {
+		return nil, ErrInvalidAmount
+	}
+	title = clipRunes(title, titleSnapshotMax)
+	desc = clipRunes(desc, goodsSnapshotMax)
 	if uc.tx == nil {
 		uc.tx = NopTx{}
 	}
 	var out *Order
 	err := uc.tx.InTx(ctx, func(ctx context.Context) error {
-		if err := uc.balances.SubRechargeBalance(ctx, userID, pkg.Amount); err != nil {
+		if err := uc.balances.SubRechargeBalance(ctx, userID, amount); err != nil {
 			return err
 		}
 		o, err := uc.orders.Create(ctx, &Order{
 			UserID:        userID,
 			PackageID:     pkg.ID,
-			Amount:        pkg.Amount,
-			TitleSnapshot: pkg.Title,
-			GoodsSnapshot: pkg.GoodsDesc,
+			Amount:        amount,
+			TitleSnapshot: title,
+			GoodsSnapshot: desc,
 			Status:        OrderPending,
 			ReleaseDays:   days,
 		})
@@ -604,7 +734,7 @@ func (uc *OrderUseCase) buyPackageWithRecharge(ctx context.Context, userID uint6
 				UserID:      userID,
 				OrderID:     &oid,
 				EntryType:   LedgerRechargeBuy,
-				Amount:      pkg.Amount.Neg(),
+				Amount:      amount.Neg(),
 				BalanceKind: BalanceRecharge,
 				Remark:      fmt.Sprintf("buy order=%d", o.ID),
 			}); err != nil {

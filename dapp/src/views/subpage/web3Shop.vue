@@ -74,7 +74,7 @@
     </button>
     <div class="cart-meta" @click="cartOpen = true">
       <div class="cart-total">{{ lang('合计') }} {{ fmt(cartTotal) }} <em>USDT</em></div>
-      <div class="cart-cap">{{ lang('日封顶') }} {{ fmt(cartCap) }} USDT</div>
+      <div class="cart-cap">{{ lang('日封顶') }} {{ fmt(cartCap) }} USDT<span v-if="cartRange">（{{ cartRange }}）</span></div>
     </div>
     <button type="button" class="checkout-btn" @click="openCheckout">{{ lang('去结算') }}</button>
   </div>
@@ -106,7 +106,7 @@
       <div class="sheet-foot">
         <div class="sheet-sum">
           <div>{{ lang('合计') }} {{ fmt(cartTotal) }} USDT</div>
-          <div class="cart-cap">{{ lang('日封顶') }} {{ fmt(cartCap) }} USDT</div>
+          <div class="cart-cap">{{ lang('日封顶') }} {{ fmt(cartCap) }} USDT<span v-if="cartRange">（{{ cartRange }}）</span></div>
         </div>
         <button type="button" class="checkout-btn" @click="openCheckout">{{ lang('去结算') }}</button>
       </div>
@@ -130,7 +130,7 @@ import request from "@/tools/request";
 import { Pagination, showFailToast } from "vant";
 import { useRouter } from 'vue-router'
 import { displayAmount } from '@/tools/amount'
-import { capForAmount, loadCapTiers, currentCapTiers } from '@/tools/dailyCap'
+import { capForAmount, rangeForAmount, loadCapTiers, currentCapTiers } from '@/tools/dailyCap'
 import Web3BuyModal from './components/web3BuyModal.vue'
 
 const CART_KEY = 'web3_shop_cart'
@@ -163,6 +163,7 @@ const spot = $computed(() => price || userinfo.ispayPrice || '2000')
 const cartCount = $computed(() => cart.reduce((s, x) => s + (Number(x.qty) || 0), 0))
 const cartTotal = $computed(() => cart.reduce((s, x) => s + Number(x.amount || 0) * (Number(x.qty) || 0), 0))
 const cartCap = $computed(() => capForAmount(cartTotal, capTiers))
+const cartRange = $computed(() => rangeForAmount(cartTotal, capTiers))
 const pageCount = $computed(() => {
   const n = Number(total) || 0
   return n > 0 ? Math.ceil(n / pageSize) : 0

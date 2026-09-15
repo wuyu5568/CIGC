@@ -52,7 +52,7 @@
                 </a-form-item>
                 <a-form-item label="单价" :label-col="labelCol" :wrapper-col="wrapperCol">
                     <a-input-number v-model="amount" :min="1" placeholder="请输入单价" style="width: 100%" />
-                    <div class="cap-hint">对应日封顶 {{ capHint }} USDT（按结算金额自动套档，档位可在「日封顶档位」页修改）</div>
+                    <div class="cap-hint">对应日封顶 {{ capHint }} USDT，金额区间 {{ capRange }}（按结算金额自动套档，档位可在「日封顶档位」页修改）</div>
                 </a-form-item>
                 <a-form-item label="上架" :label-col="labelCol" :wrapper-col="wrapperCol">
                     <a-switch v-model="enabled" />
@@ -120,6 +120,20 @@ const capForTiers = (amount, tiers) => {
     return list.length ? String(list[list.length - 1].daily_cap || '0') : '0'
 }
 
+const rangeForTiers = (amount, tiers) => {
+    const a = Number(amount)
+    if (!Number.isFinite(a) || a <= 0) return '—'
+    const list = Array.isArray(tiers) && tiers.length ? tiers : DEFAULT_CAP_TIERS
+    let from = '0'
+    for (let i = 0; i < list.length; i++) {
+        const max = String(list[i].max_amount || '').trim()
+        if (!max) return `${from} 及以上`
+        if (a < Number(max)) return `${from} ≤ 金额 < ${max}`
+        from = max
+    }
+    return `${from} 及以上`
+}
+
 const capForAmount = (amount, tiers) => capForTiers(amount, tiers)
 
 export default {
@@ -180,7 +194,11 @@ export default {
                 {
                     title: '日封顶',
                     dataIndex: 'daily_cap',
-                    customRender: (v, row) => trimAmount(v || capForAmount(row && row.amount, this.capTiers)),
+                    customRender: (v, row) => {
+                        const cap = trimAmount(v || capForAmount(row && row.amount, this.capTiers))
+                        const range = rangeForTiers(row && row.amount, this.capTiers)
+                        return <span>{cap}（{range}）</span>
+                    },
                 },
                 {
                     title: '状态',
@@ -216,6 +234,9 @@ export default {
     computed: {
         capHint() {
             return capForAmount(this.amount, this.capTiers)
+        },
+        capRange() {
+            return rangeForTiers(this.amount, this.capTiers)
         },
     },
     methods: {

@@ -24,7 +24,7 @@
       </li>
       <li>
         <span class="detail-label">{{ lang('日封顶') }}</span>
-        <span class="detail-value">{{ fmt(item.daily_cap) }} USDT</span>
+        <span class="detail-value">{{ fmt(dailyCap) }} USDT<span v-if="capRange" class="cap-range">（{{ capRange }}）</span></span>
       </li>
     </ul>
       <div class="goods-detail">
@@ -55,6 +55,7 @@ import request from "@/tools/request";
 import { showFailToast } from "vant";
 import { useRoute, useRouter } from 'vue-router'
 import { displayAmount } from '@/tools/amount'
+import { capForAmount, rangeForAmount, loadCapTiers, currentCapTiers } from '@/tools/dailyCap'
 import Web3BuyModal from './components/web3BuyModal.vue'
 
 const router = useRouter()
@@ -68,6 +69,9 @@ const isOpen = $ref(false)
 const spot = $computed(() => price || userinfo.ispayPrice || '2000')
 
 const fmt = (v) => displayAmount(v)
+let capTiers = $ref(currentCapTiers())
+const dailyCap = $computed(() => capForAmount(item.amount, capTiers) || item.daily_cap)
+const capRange = $computed(() => rangeForAmount(item.amount, capTiers))
 
 const handleBack = () => {
   router.push('/Web3Shop')
@@ -106,6 +110,9 @@ const fetchDetail = async () => {
 
 watch(() => route.params.id, fetchDetail, { immediate: true })
 fetchPrice()
+loadCapTiers(request).then((rows) => {
+  if (rows && rows.length) capTiers = rows
+})
 </script>
 <style lang='less' scoped>
   .shop-page {
@@ -165,6 +172,10 @@ fetchPrice()
         .detail-value {
           color: #cab255;
           font-size: 14px;
+          .cap-range {
+            color: #a0a0a0;
+            font-size: 12px;
+          }
         }
       }
     }

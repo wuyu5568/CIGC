@@ -433,6 +433,7 @@ func (s *AppService) CompatBuy(w http.ResponseWriter, r *http.Request) {
 		Amount      json.RawMessage `json:"amount"`
 		Days        json.RawMessage `json:"days"`
 		ReleaseDays json.RawMessage `json:"release_days"`
+		Items       json.RawMessage `json:"items"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "fail"})
@@ -444,9 +445,12 @@ func (s *AppService) CompatBuy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "请选择释放天数"})
 		return
 	}
-	goodsID, _ := strconv.ParseUint(strings.Trim(firstNonEmpty(string(body.ID), string(body.GoodsID), string(body.PackageID)), `"`), 10, 64)
 	var o *biz.Order
-	if goodsID > 0 {
+	if cart, hasCart, cerr := parseBuyCartItems(body.Items); cerr != nil {
+		err = cerr
+	} else if hasCart {
+		o, err = s.orders.BuyCartWithRecharge(r.Context(), uid, cart, days)
+	} else if goodsID, _ := strconv.ParseUint(strings.Trim(firstNonEmpty(string(body.ID), string(body.GoodsID), string(body.PackageID)), `"`), 10, 64); goodsID > 0 {
 		o, err = s.orders.BuyWithRechargeGoods(r.Context(), uid, goodsID, days)
 	} else {
 		amountStr := strings.Trim(string(body.Amount), `"`)
@@ -544,6 +548,40 @@ func parseReleaseDays(s string) (int, error) {
 		return 0, biz.ErrInvalidReleaseDays
 	}
 	return n, nil
+}
+
+func parseBuyCartItems(raw json.RawMessage) ([]biz.CartItem, bool, error) {
+	s := strings.TrimSpace(string(raw))
+	if s == "" || s == "null" {
+		return nil, false, nil
+	}
+	var rows []struct {
+		ID  json.RawMessage `json:"id"`
+		Qty json.RawMessage `json:"qty"`
+	}
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		return nil, false, biz.ErrInvalidAmount
+	}
+	if len(rows) == 0 {
+		return nil, false, nil
+	}
+	out := make([]biz.CartItem, 0, len(rows))
+	for _, row := range rows {
+		id, err := strconv.ParseUint(strings.Trim(string(row.ID), `"`), 10, 64)
+		if err != nil || id == 0 {
+			return nil, false, biz.ErrPackageNotFound
+		}
+		qtyStr := strings.TrimSpace(strings.Trim(string(row.Qty), `"`))
+		if qtyStr == "" || qtyStr == "null" {
+			return nil, false, biz.ErrInvalidAmount
+		}
+		qty, err := strconv.Atoi(qtyStr)
+		if err != nil || qty <= 0 {
+			return nil, false, biz.ErrInvalidAmount
+		}
+		out = append(out, biz.CartItem{GoodsID: id, Qty: qty})
+	}
+	return out, true, nil
 }
 
 func releaseTiersJSON() []map[string]any {
