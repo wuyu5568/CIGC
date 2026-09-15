@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/cigc/app/internal/biz"
@@ -261,4 +262,29 @@ func (r *configRepo) SetValue(ctx context.Context, id uint64, value string) erro
 		return biz.ErrConfigNotFound
 	}
 	return nil
+}
+
+func (r *configRepo) Upsert(ctx context.Context, row *biz.BusinessConfig) error {
+	if row == nil || strings.TrimSpace(row.Key) == "" {
+		return biz.ErrConfigInvalid
+	}
+	var m BusinessConfigModel
+	err := r.data.Session(ctx).Where("config_key = ?", row.Key).First(&m).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		m = BusinessConfigModel{
+			ConfigKey: row.Key,
+			Name:      row.Name,
+			Value:     row.Value,
+			SortOrder: row.SortOrder,
+		}
+		return r.data.Session(ctx).Create(&m).Error
+	}
+	if err != nil {
+		return err
+	}
+	return r.data.Session(ctx).Model(&m).Updates(map[string]any{
+		"name":       row.Name,
+		"value":      row.Value,
+		"sort_order": row.SortOrder,
+	}).Error
 }

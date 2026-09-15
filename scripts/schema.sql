@@ -163,7 +163,8 @@ INSERT INTO business_configs (config_key, name, value, sort_order) VALUES
 ('withdraw_daily_limit_ispay', 'ISPAY 单笔提现上限', '1000', 45),
 ('ispay_price', 'ISPAY 测试现价', '2000', 50),
 ('overflow_clear_hours', '冻结清除时间', '72', 60),
-('withdraw_enabled', '提现开关', '1', 70)
+('withdraw_enabled', '提现开关', '1', 70),
+('daily_cap_tiers', '日封顶档位', '[{"max_amount":"3000","daily_cap":"600"},{"max_amount":"6000","daily_cap":"1800"},{"max_amount":"12000","daily_cap":"4000"},{"max_amount":"24000","daily_cap":"16000"},{"max_amount":"36000","daily_cap":"24000"},{"max_amount":"50000","daily_cap":"30000"},{"max_amount":"70000","daily_cap":"42000"},{"max_amount":"100000","daily_cap":"60000"},{"max_amount":"","daily_cap":"100000"}]', 80)
 ON DUPLICATE KEY UPDATE name = VALUES(name), value = VALUES(value), sort_order = VALUES(sort_order);
 
 -- 日结防重（金牛口径：上海自然日唯一占位）

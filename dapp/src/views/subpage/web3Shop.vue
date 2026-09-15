@@ -130,7 +130,7 @@ import request from "@/tools/request";
 import { Pagination, showFailToast } from "vant";
 import { useRouter } from 'vue-router'
 import { displayAmount } from '@/tools/amount'
-import { capForAmount } from '@/tools/dailyCap'
+import { capForAmount, loadCapTiers, currentCapTiers } from '@/tools/dailyCap'
 import Web3BuyModal from './components/web3BuyModal.vue'
 
 const CART_KEY = 'web3_shop_cart'
@@ -157,11 +157,12 @@ const price = $ref('')
 const isOpen = $ref(false)
 let cart = $ref(readCart())
 let cartOpen = $ref(false)
+let capTiers = $ref(currentCapTiers())
 
 const spot = $computed(() => price || userinfo.ispayPrice || '2000')
 const cartCount = $computed(() => cart.reduce((s, x) => s + (Number(x.qty) || 0), 0))
 const cartTotal = $computed(() => cart.reduce((s, x) => s + Number(x.amount || 0) * (Number(x.qty) || 0), 0))
-const cartCap = $computed(() => capForAmount(cartTotal))
+const cartCap = $computed(() => capForAmount(cartTotal, capTiers))
 const pageCount = $computed(() => {
   const n = Number(total) || 0
   return n > 0 ? Math.ceil(n / pageSize) : 0
@@ -299,6 +300,9 @@ onBeforeUnmount(() => {
 
 fetchPrice()
 fetchList()
+loadCapTiers(request).then((rows) => {
+  capTiers = rows
+})
 </script>
 <style lang='less' scoped>
   .shop-page {

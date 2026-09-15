@@ -2,6 +2,7 @@ package biz
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	"github.com/cigc/app/internal/pkg/money"
@@ -90,6 +91,50 @@ func (uc *ConfigUseCase) Update(ctx context.Context, id uint64, raw string) (*Bu
 	}
 	row.Value = value
 	return row, nil
+}
+
+// DailyCapTiers 读档位表；库中没有或非法时回落默认档。
+func (uc *ConfigUseCase) DailyCapTiers(ctx context.Context) []CapTierJSON {
+	if uc != nil {
+		LoadCapTiersFromRepo(ctx, uc.configs)
+	}
+	capTiersMu.RLock()
+	tiers := capTiers
+	capTiersMu.RUnlock()
+	return CapTiersToJSON(tiers)
+}
+
+// SaveDailyCapTiers 校验并写入日封顶档位，同时刷新进程缓存。
+func (uc *ConfigUseCase) SaveDailyCapTiers(ctx context.Context, rows []CapTierJSON) ([]CapTierJSON, error) {
+	if uc == nil || uc.configs == nil {
+		return nil, ErrConfigNotFound
+	}
+	tiers, err := NormalizeCapTiersJSON(rows)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := json.Marshal(CapTiersToJSON(tiers))
+	if err != nil {
+		return nil, ErrConfigInvalid
+	}
+	if err := uc.configs.Upsert(ctx, &BusinessConfig{
+		Key:       ConfigDailyCapTiers,
+		Name:      configDailyCapTiersName,
+		Value:     string(raw),
+		SortOrder: 80,
+	}); err != nil {
+		return nil, err
+	}
+	SetRuntimeCapTiers(tiers)
+	return CapTiersToJSON(tiers), nil
+}
+
+// LoadDailyCapTiers 启动时从库加载档位。
+func (uc *ConfigUseCase) LoadDailyCapTiers(ctx context.Context) {
+	if uc == nil {
+		return
+	}
+	LoadCapTiersFromRepo(ctx, uc.configs)
 }
 
 // Spot 读测试/配置中的 ispay 现价；无效则回落 2000。

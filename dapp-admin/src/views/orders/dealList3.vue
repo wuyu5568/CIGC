@@ -52,7 +52,7 @@
                 </a-form-item>
                 <a-form-item label="单价" :label-col="labelCol" :wrapper-col="wrapperCol">
                     <a-input-number v-model="amount" :min="1" placeholder="请输入单价" style="width: 100%" />
-                    <div class="cap-hint">对应日封顶 {{ capHint }} USDT（按结算金额自动套档，不可配置）</div>
+                    <div class="cap-hint">对应日封顶 {{ capHint }} USDT（按结算金额自动套档，档位可在「日封顶档位」页修改）</div>
                 </a-form-item>
                 <a-form-item label="上架" :label-col="labelCol" :wrapper-col="wrapperCol">
                     <a-switch v-model="enabled" />
@@ -95,19 +95,32 @@ const htmlToPlain = (s) => {
         .trim()
 }
 
-const capForAmount = (amount) => {
+const DEFAULT_CAP_TIERS = [
+    { max_amount: '3000', daily_cap: '600' },
+    { max_amount: '6000', daily_cap: '1800' },
+    { max_amount: '12000', daily_cap: '4000' },
+    { max_amount: '24000', daily_cap: '16000' },
+    { max_amount: '36000', daily_cap: '24000' },
+    { max_amount: '50000', daily_cap: '30000' },
+    { max_amount: '70000', daily_cap: '42000' },
+    { max_amount: '100000', daily_cap: '60000' },
+    { max_amount: '', daily_cap: '100000' },
+]
+
+const capForTiers = (amount, tiers) => {
     const a = Number(amount)
     if (!Number.isFinite(a) || a <= 0) return '0'
-    if (a < 3000) return '600'
-    if (a < 6000) return '1800'
-    if (a < 12000) return '4000'
-    if (a < 24000) return '16000'
-    if (a < 36000) return '24000'
-    if (a < 50000) return '30000'
-    if (a < 70000) return '42000'
-    if (a < 100000) return '60000'
-    return '100000'
+    const list = Array.isArray(tiers) && tiers.length ? tiers : DEFAULT_CAP_TIERS
+    for (let i = 0; i < list.length; i++) {
+        const max = String(list[i].max_amount || '').trim()
+        const cap = String(list[i].daily_cap || '0')
+        if (!max) return cap
+        if (a < Number(max)) return cap
+    }
+    return list.length ? String(list[list.length - 1].daily_cap || '0') : '0'
 }
+
+const capForAmount = (amount, tiers) => capForTiers(amount, tiers)
 
 export default {
     name: 'dealList3',
@@ -137,6 +150,7 @@ export default {
                 sm: { span: 18 },
             },
             confirmLoading: false,
+            capTiers: [],
             columns: [
                 {
                     title: 'ID',
@@ -166,7 +180,7 @@ export default {
                 {
                     title: '日封顶',
                     dataIndex: 'daily_cap',
-                    customRender: (v, row) => trimAmount(v || capForAmount(row && row.amount)),
+                    customRender: (v, row) => trimAmount(v || capForAmount(row && row.amount, this.capTiers)),
                 },
                 {
                     title: '状态',
@@ -201,7 +215,7 @@ export default {
     },
     computed: {
         capHint() {
-            return capForAmount(this.amount)
+            return capForAmount(this.amount, this.capTiers)
         },
     },
     methods: {
@@ -389,6 +403,9 @@ export default {
         },
         getList() {
             this.loading = true
+            Gai.daily_cap_tiers().then((capRes) => {
+                if (capRes && Array.isArray(capRes.tiers)) this.capTiers = capRes.tiers
+            }).catch(() => {})
             Gai.web3_goods_list({
                 page: this.current,
                 page_size: this.pageSize,

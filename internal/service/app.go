@@ -42,7 +42,11 @@ type AppService struct {
 
 // NewAppService 构造 HTTP 适配器。
 func NewAppService(users *biz.UserUseCase, orders *biz.OrderUseCase, settle *biz.SettleUseCase, ledger *biz.LedgerUseCase, withdraw *biz.WithdrawUseCase, place *biz.PlacementUseCase, deposit *biz.DepositUseCase, configs *biz.ConfigUseCase, adjust *biz.AdjustUseCase, stats *biz.StatsUseCase, ping *data.Data, auth *conf.Auth, app *conf.App) *AppService {
-	return &AppService{users: users, orders: orders, settle: settle, ledger: ledger, withdraw: withdraw, place: place, deposit: deposit, configs: configs, adjust: adjust, stats: stats, ping: ping, auth: auth, app: app}
+	s := &AppService{users: users, orders: orders, settle: settle, ledger: ledger, withdraw: withdraw, place: place, deposit: deposit, configs: configs, adjust: adjust, stats: stats, ping: ping, auth: auth, app: app}
+	if configs != nil {
+		configs.LoadDailyCapTiers(context.Background())
+	}
+	return s
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -2286,6 +2290,9 @@ func (s *AppService) CompatAdminConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	list := make([]map[string]any, 0, len(rows))
 	for _, c := range rows {
+		if c.Key == biz.ConfigDailyCapTiers {
+			continue
+		}
 		group, hint, effect := biz.ConfigMeta(c.Key)
 		list = append(list, map[string]any{
 			"id":     strconv.FormatUint(c.ID, 10),
@@ -2341,6 +2348,42 @@ func readConfigUpdate(r *http.Request) (uint64, string, error) {
 	}
 	id, err := parseUint(firstNonEmpty(r.Form.Get("id"), r.Form.Get("config_id")))
 	return id, r.Form.Get("value"), err
+}
+
+func (s *AppService) CompatDailyCapTiers(w http.ResponseWriter, r *http.Request) {
+	var tiers []biz.CapTierJSON
+	if s.configs != nil {
+		tiers = s.configs.DailyCapTiers(r.Context())
+	} else {
+		tiers = biz.CapTiersToJSON(nil)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "ok",
+		"tiers":  tiers,
+	})
+}
+
+func (s *AppService) CompatAdminDailyCapTiersUpdate(w http.ResponseWriter, r *http.Request) {
+	if s.configs == nil {
+		writeBizError(w, biz.ErrConfigNotFound)
+		return
+	}
+	var body struct {
+		Tiers []biz.CapTierJSON `json:"tiers"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeBizError(w, biz.ErrConfigInvalid)
+		return
+	}
+	tiers, err := s.configs.SaveDailyCapTiers(r.Context(), body.Tiers)
+	if err != nil {
+		writeBizError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "ok",
+		"tiers":  tiers,
+	})
 }
 
 func (s *AppService) CompatAdminRecommendList(w http.ResponseWriter, r *http.Request) {

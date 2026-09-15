@@ -133,6 +133,7 @@ type ConfigRepo interface {
 	List(ctx context.Context) ([]*BusinessConfig, error)
 	FindByID(ctx context.Context, id uint64) (*BusinessConfig, error)
 	SetValue(ctx context.Context, id uint64, value string) error
+	Upsert(ctx context.Context, row *BusinessConfig) error
 }
 
 // TxRunner 把一组写操作放进同一事务；测试可用空实现。

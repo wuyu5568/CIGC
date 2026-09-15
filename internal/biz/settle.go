@@ -12,34 +12,6 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// CapForAmount 按结算金额套日封顶。无金额为 0；有金额且小于 3000 为 600。
-func CapForAmount(paid decimal.Decimal) decimal.Decimal {
-	paid = money.Round(paid)
-	if !paid.IsPositive() {
-		return decimal.Zero
-	}
-	switch {
-	case paid.LessThan(decimal.RequireFromString("3000")):
-		return decimal.RequireFromString("600")
-	case paid.LessThan(decimal.RequireFromString("6000")):
-		return decimal.RequireFromString("1800")
-	case paid.LessThan(decimal.RequireFromString("12000")):
-		return decimal.RequireFromString("4000")
-	case paid.LessThan(decimal.RequireFromString("24000")):
-		return decimal.RequireFromString("16000")
-	case paid.LessThan(decimal.RequireFromString("36000")):
-		return decimal.RequireFromString("24000")
-	case paid.LessThan(decimal.RequireFromString("50000")):
-		return decimal.RequireFromString("30000")
-	case paid.LessThan(decimal.RequireFromString("70000")):
-		return decimal.RequireFromString("42000")
-	case paid.LessThan(decimal.RequireFromString("100000")):
-		return decimal.RequireFromString("60000")
-	default:
-		return decimal.RequireFromString("100000")
-	}
-}
-
 // MatchCap 保留旧签名；封顶只看结算金额，不再读取套餐 daily_cap。
 func MatchCap(paid decimal.Decimal, _ []*Package) decimal.Decimal {
 	return CapForAmount(paid)
@@ -601,6 +573,7 @@ func (uc *SettleUseCase) OnOrderPaid(ctx context.Context, o *Order) error {
 	if uc == nil || o == nil || o.ID == 0 || o.UserID == 0 {
 		return nil
 	}
+	LoadCapTiersFromRepo(ctx, uc.configs)
 	if err := ApplyPaidOrderCap(ctx, uc.users, uc.packages, o.UserID, o.Amount); err != nil {
 		return err
 	}
@@ -658,6 +631,8 @@ func (uc *SettleUseCase) OnOrderPaid(ctx context.Context, o *Order) error {
 func (uc *SettleUseCase) Run(ctx context.Context, force bool) (*SettleResult, error) {
 	uc.mu.Lock()
 	defer uc.mu.Unlock()
+
+	LoadCapTiersFromRepo(ctx, uc.configs)
 
 	if force && !uc.allowForce {
 		return nil, ErrForceSettleDisabled
@@ -1127,6 +1102,7 @@ func (uc *SettleUseCase) creditStaticForOrder(ctx context.Context, o *Order, spo
 }
 
 func (uc *SettleUseCase) refreshCaps(ctx context.Context) (*SettleResult, error) {
+	LoadCapTiersFromRepo(ctx, uc.configs)
 	users, err := uc.users.ListAll(ctx)
 	if err != nil {
 		return nil, err

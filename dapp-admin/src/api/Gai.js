@@ -207,6 +207,20 @@ export default {
             data: parameter
         })
     },
+    daily_cap_tiers: (parameter) => {
+        return axios({
+            url: `${api8005}/daily_cap_tiers`,
+            method: 'get',
+            params: parameter
+        })
+    },
+    daily_cap_tiers_update: (parameter) => {
+        return axios({
+            url: `${api8005}/daily_cap_tiers_update`,
+            method: 'post',
+            data: parameter
+        })
+    },
     downline: (parameter) => {
         return axios({
             url: `${api8005}/downline`,

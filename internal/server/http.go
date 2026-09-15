@@ -105,6 +105,8 @@ func registerAdminRoutes(srv *khttp.Server, prefix, jwt string, svc *service.App
 	srv.Handle(prefix+"/downline", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.CompatAdminDownline)))
 	srv.Handle(prefix+"/config", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.CompatAdminConfig)))
 	srv.Handle(prefix+"/config_update", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.CompatAdminConfigUpdate)))
+	srv.Handle(prefix+"/daily_cap_tiers", stdhttp.HandlerFunc(auth.RequireAdminOrUserGET(jwt, svc.CompatDailyCapTiers)))
+	srv.Handle(prefix+"/daily_cap_tiers_update", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.CompatAdminDailyCapTiersUpdate)))
 	srv.Handle(prefix+"/package_list", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.CompatAdminPackageList)))
 	srv.Handle(prefix+"/package_create", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.CompatAdminPackageCreate)))
 	srv.Handle(prefix+"/package_update", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.CompatAdminPackageUpdate)))

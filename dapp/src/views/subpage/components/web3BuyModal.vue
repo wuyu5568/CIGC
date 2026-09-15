@@ -38,7 +38,7 @@ import lang from '@/i18n/index'
 import request from "@/tools/request";
 import { showLoadingToast, closeToast, showFailToast, showSuccessToast } from "vant";
 import { displayAmount } from '@/tools/amount'
-import { capForAmount } from '@/tools/dailyCap'
+import { capForAmount, loadCapTiers, currentCapTiers } from '@/tools/dailyCap'
 
 const dayTabs = [300, 600, 750]
 const defaultTiers = [
@@ -65,6 +65,10 @@ const open = computed({
 let days = $ref(300)
 let buying = $ref(false)
 const tiers = defaultTiers
+let capTiers = $ref(currentCapTiers())
+loadCapTiers(request).then((rows) => {
+  capTiers = rows
+})
 
 const lines = $computed(() => {
   if (Array.isArray(props.items) && props.items.length) {
@@ -99,7 +103,7 @@ const totalAmount = $computed(() => {
   return Number(props.amount || 0)
 })
 
-const dailyCap = $computed(() => capForAmount(totalAmount))
+const dailyCap = $computed(() => capForAmount(totalAmount, capTiers))
 
 const preview = $computed(() => {
   const t = tiers.find((x) => Number(x.days) === Number(days))

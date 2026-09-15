@@ -32,18 +32,18 @@ export const asyncRouterMap = [
                 component: () => import('@/views/orders/member'),
                 meta: { title: '用户数据', keepAlive: true, icon: "setting", permission: ['dashboard'] },
             },
-            {
-                path: '/dealList',
-                name: 'dealList',
-                component: () => import('@/views/orders/dealList'),
-                meta: { title: '商品列表', keepAlive: true, icon: "setting", permission: ['dashboard'] },
-            },
-            {
-                path: '/dealList2',
-                name: 'dealList2',
-                component: () => import('@/views/orders/dealList2'),
-                meta: { title: '医疗保健商品', keepAlive: true, icon: "setting", permission: ['dashboard'] },
-            },
+            // {
+            //     path: '/dealList',
+            //     name: 'dealList',
+            //     component: () => import('@/views/orders/dealList'),
+            //     meta: { title: '商品列表', keepAlive: true, icon: "setting", permission: ['dashboard'] },
+            // },
+            // {
+            //     path: '/dealList2',
+            //     name: 'dealList2',
+            //     component: () => import('@/views/orders/dealList2'),
+            //     meta: { title: '医疗保健商品', keepAlive: true, icon: "setting", permission: ['dashboard'] },
+            // },
             {
                 path: '/dealList3',
                 name: 'dealList3',
@@ -56,18 +56,18 @@ export const asyncRouterMap = [
                 component: () => import('@/views/orders/subscription'),
                 meta: { title: '认购列表', keepAlive: true, icon: "setting", permission: ['dashboard'] },
             },
-            {
-                path: '/subscription4',
-                name: 'subscription4',
-                component: () => import('@/views/orders/subscription4'),
-                meta: { title: '长寿商店认购列表', keepAlive: true, icon: "setting", permission: ['dashboard'] },
-            },
-            {
-                path: '/subscription2',
-                name: 'subscription2',
-                component: () => import('@/views/orders/subscription2'),
-                meta: { title: '医疗保健商品认购列表', keepAlive: true, icon: "setting", permission: ['dashboard'] },
-            },
+            // {
+            //     path: '/subscription4',
+            //     name: 'subscription4',
+            //     component: () => import('@/views/orders/subscription4'),
+            //     meta: { title: '长寿商店认购列表', keepAlive: true, icon: "setting", permission: ['dashboard'] },
+            // },
+            // {
+            //     path: '/subscription2',
+            //     name: 'subscription2',
+            //     component: () => import('@/views/orders/subscription2'),
+            //     meta: { title: '医疗保健商品认购列表', keepAlive: true, icon: "setting", permission: ['dashboard'] },
+            // },
             {
                 path: '/subscription3',
                 name: 'subscription3',
@@ -128,6 +128,12 @@ export const asyncRouterMap = [
                 name: 'config',
                 component: () => import('@/views/orders/config'),
                 meta: { title: '配置项', keepAlive: true, icon: "setting", permission: ['dashboard'] },
+            },
+            {
+                path: '/dailyCap',
+                name: 'dailyCap',
+                component: () => import('@/views/orders/dailyCap'),
+                meta: { title: '日封顶档位', keepAlive: true, icon: "setting", permission: ['dashboard'] },
             },
             // {
             //     path: '/admin',

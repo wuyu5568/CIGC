@@ -278,6 +278,26 @@ func (m *memConfigs) SetValue(_ context.Context, id uint64, value string) error 
 	return ErrConfigNotFound
 }
 
+func (m *memConfigs) Upsert(_ context.Context, row *BusinessConfig) error {
+	if row == nil || row.Key == "" {
+		return ErrConfigInvalid
+	}
+	for _, r := range m.rows {
+		if r.Key == row.Key {
+			r.Name = row.Name
+			r.Value = row.Value
+			r.SortOrder = row.SortOrder
+			return nil
+		}
+	}
+	cp := *row
+	if cp.ID == 0 {
+		cp.ID = uint64(len(m.rows) + 1)
+	}
+	m.rows = append(m.rows, &cp)
+	return nil
+}
+
 func newWithdrawUC(users *memUsers, led *memLedger, wds *memWithdraws, min string) *WithdrawUseCase {
 	return NewWithdrawUseCase(users, users, led, wds, &memConfigs{min: min}, NopTx{})
 }

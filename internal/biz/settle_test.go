@@ -20,6 +20,7 @@ func seedCapPackages() []*Package {
 }
 
 func TestMatchCap(t *testing.T) {
+	ResetRuntimeCapTiers()
 	cases := []struct {
 		paid string
 		want string
