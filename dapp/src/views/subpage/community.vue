@@ -26,12 +26,32 @@
     <div class="performance-list">
       <div class="performance-info">
         <div class="performance-info-item">
+          <p>{{ teamCount }}</p>
+          <p>{{ lang('团队人数') }}</p>
+        </div>
+        <div class="performance-info-item">
+          <p>{{ directCount }}</p>
+          <p>{{ lang('直推人数') }}</p>
+        </div>
+        <div class="performance-info-item">
+          <p>{{ activatedCount }}</p>
+          <p>{{ lang('激活人数') }}</p>
+        </div>
+        <div class="performance-info-item">
           <p>{{ userinfo.total || 0 }}</p>
           <p>{{ lang('总业绩') }}</p>
         </div>
         <div class="performance-info-item">
           <p>{{ userinfo.max || 0 }}</p>
           <p>{{ lang('大区业绩') }}</p>
+        </div>
+        <div class="performance-info-item">
+          <p>{{ userinfo.min || 0 }}</p>
+          <p>{{ lang('小区业绩') }}</p>
+        </div>
+        <div class="performance-info-item">
+          <p>{{ pairedVolume }}</p>
+          <p>{{ lang('已碰业绩') }}</p>
         </div>
       </div>
       <div class="performance-share-title">{{ lang('直接邀请数据') }}</div>
@@ -69,6 +89,16 @@ const person = userPerson();
 
 const userinfo = $computed(() => person.userinfo);
 const address = $computed(() => person.address);
+const pickNum = (...vals) => {
+  for (const v of vals) {
+    if (v != null && v !== '') return v
+  }
+  return 0
+}
+const teamCount = $computed(() => pickNum(userinfo.teamCount, userinfo.team_count))
+const directCount = $computed(() => pickNum(userinfo.directCount, userinfo.direct_count, userinfo.historyRecommend, userinfo.locationNum))
+const activatedCount = $computed(() => pickNum(userinfo.activatedCount, userinfo.activated_count))
+const pairedVolume = $computed(() => pickNum(userinfo.pairedVolume, userinfo.paired_volume, userinfo.paired))
 
 const expandedKeys = $ref([]);
 const selectedKeys = $ref([]);
@@ -206,29 +236,30 @@ const handleBack = () => {
         }
       }
       .performance-list {
-        min-height: 353px;
+        min-height: 520px;
         background: hsla(0, 0%, 100%, .1);
         border-radius: 18px;
         padding: 15px;
         background-image: url(../../assets/images/boxbg2.png);
         background-repeat: no-repeat;
-        background-size: 100% 218px;
+        background-size: 100% auto;
         box-sizing: border-box;
         .performance-info {
           display: flex;
-          justify-content: space-between;
+          flex-wrap: wrap;
           background: hsla(0, 0%, 100%, .05);
           border: 1px solid #444;
           border-radius: 18px;
           margin-bottom: 20px;
           .performance-info-item {
+            width: 50%;
             height: 83px;
-            flex: 1 0 0;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
             gap: 10px;
+            box-sizing: border-box;
           }
         }
         .performance-share-title {

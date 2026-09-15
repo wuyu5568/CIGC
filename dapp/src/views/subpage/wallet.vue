@@ -29,11 +29,11 @@
       <div class="pledge">
         <div class="pledge-info">
           <div class="pledge-item">
-            <p>{{ lang('待释放') }}</p>
+            <p>{{ lang('待释放') }}ISPAY:</p>
             <p>{{ userinfo.amountGetSub || 0 }}</p>
           </div>
           <div class="pledge-item">
-            <p>{{ lang('已释放') }}</p>
+            <p>{{ lang('已释放') }}ISPAY:</p>
             <p>{{ userinfo.amountGet || 0 }}</p>
           </div>
         </div>
@@ -43,20 +43,20 @@
       </div>
       <div class="pledge-frame">
         <div class="pledge-frame-item">
-          <p>{{ lang('静态收益') }}</p>
-          <p>{{ userinfo.location || 0 }}</p>
-        </div>
-        <div class="pledge-frame-item">
           <p>{{ lang('直推收益') }}</p>
           <p>{{ userinfo.recommend || 0 }}</p>
         </div>
         <div class="pledge-frame-item">
-          <p>{{ lang('对碰奖励') }}</p>
+          <p>{{ lang('对碰收益') }}</p>
           <p>{{ userinfo.recommendTwo || 0 }}</p>
         </div>
         <div class="pledge-frame-item">
-          <p>{{ lang('管理奖励') }}</p>
+          <p>{{ lang('管理收益') }}</p>
           <p>{{ userinfo.team || 0 }}</p>
+        </div>
+        <div class="pledge-frame-item">
+          <p>{{ lang('全部收益') }}</p>
+          <p>{{ allIncome }}</p>
         </div>
       </div>
       <van-tabs v-model:active="active" @click-tab="onClickTab">
@@ -150,6 +150,12 @@ import OrgBranch from './components/OrgBranch.vue'
 const router = useRouter()
 const person = userPerson();
 const userinfo = $computed(() => person.userinfo);
+const allIncome = $computed(() => {
+  const n = (v) => Number(String(v ?? 0).replace(/,/g, '')) || 0
+  return displayAmount(
+    n(userinfo.location) + n(userinfo.recommend) + n(userinfo.recommendTwo) + n(userinfo.team)
+  )
+})
 
 const active = $ref('1')
 const tab = $ref(1)

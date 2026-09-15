@@ -100,6 +100,76 @@ func ZoneVolume(left, right decimal.Decimal) TeamVolume {
 	return v
 }
 
+// UserTeamStat 用户端社群人数与已对碰业绩。
+type UserTeamStat struct {
+	TeamCount      int
+	DirectCount    int
+	ActivatedCount int
+	Paired         decimal.Decimal
+}
+
+// UserTeamStatOf 邀请团队人数（不含自己）+ 直推/激活人数 + 已对碰业绩。
+func (uc *PlacementUseCase) UserTeamStatOf(ctx context.Context, userID uint64) (UserTeamStat, error) {
+	out := UserTeamStat{Paired: decimal.Zero}
+	if uc == nil || userID == 0 || uc.users == nil {
+		return out, nil
+	}
+	seen := map[uint64]struct{}{userID: {}}
+	var walk func(id uint64, depth int) error
+	walk = func(id uint64, depth int) error {
+		kids, err := uc.users.ListByInviter(ctx, id)
+		if err != nil {
+			return err
+		}
+		sort.Slice(kids, func(i, j int) bool { return kids[i].ID < kids[j].ID })
+		for _, k := range kids {
+			if k == nil {
+				continue
+			}
+			if _, ok := seen[k.ID]; ok {
+				continue
+			}
+			seen[k.ID] = struct{}{}
+			out.TeamCount++
+			if depth == 0 {
+				out.DirectCount++
+			}
+			if k.IsActivated() {
+				out.ActivatedCount++
+			}
+			if err := walk(k.ID, depth+1); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := walk(userID, 0); err != nil {
+		return out, err
+	}
+	nodes, err := uc.listDirectRecommend(ctx, userID)
+	if err != nil {
+		return out, err
+	}
+	lp, rp := decimal.Zero, decimal.Zero
+	for _, n := range nodes {
+		if n == nil {
+			continue
+		}
+		switch n.Side {
+		case SideLeft:
+			lp = n.Amount
+		case SideRight:
+			rp = n.Amount
+		}
+	}
+	vol, err := uc.TeamVolumeOf(ctx, userID)
+	if err != nil {
+		return out, err
+	}
+	out.Paired = PairedVolume(lp, rp, vol.Left, vol.Right)
+	return out, nil
+}
+
 // AdminTeamStat 管理端会员业绩：安置子树累计认购（不含自己）+ 历史 pair。
 type AdminTeamStat struct {
 	Volume TeamVolume

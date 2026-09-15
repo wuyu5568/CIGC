@@ -183,6 +183,14 @@ func (s *AppService) CompatUserInfo(w http.ResponseWriter, r *http.Request) {
 		writeBizError(w, err)
 		return
 	}
+	teamStat := biz.UserTeamStat{}
+	if s.place != nil {
+		teamStat, err = s.place.UserTeamStatOf(r.Context(), user.ID)
+		if err != nil {
+			writeBizError(w, err)
+			return
+		}
+	}
 	unlock := biz.ComputeLockUnlock(user, false)
 	if s.settle != nil {
 		unlock, err = s.settle.PreviewUserLockUnlock(r.Context(), user)
@@ -225,11 +233,15 @@ func (s *AppService) CompatUserInfo(w http.ResponseWriter, r *http.Request) {
 		"withdrawTodayTwo":  decStr(limits.TodayTwo),
 		"withdrawRemainTwo": decStr(limits.RemainTwo),
 		"withdrawEnabled":   withdrawOn,
-		"locationNum":       "0",
+		"locationNum":       strconv.Itoa(teamStat.DirectCount),
 		"LocationList":      []any{},
 		"total":             decStr(vol.Total),
 		"max":               decStr(vol.Max),
 		"min":               decStr(vol.Min),
+		"teamCount":         strconv.Itoa(teamStat.TeamCount),
+		"directCount":       strconv.Itoa(teamStat.DirectCount),
+		"activatedCount":    strconv.Itoa(teamStat.ActivatedCount),
+		"pairedVolume":      decStr(teamStat.Paired),
 		"buy":               decStr(user.PaidAmount),
 		"amountGetSub":      stats["amountGetSub"],
 		"outNum":            stats["outNum"],
