@@ -124,6 +124,8 @@ func IsRewardEntry(entryType string) bool {
 
 // ReqTypeToEntryType 将 dapp reqType 映射为 entry_type。
 // 空或 "1"：默认三类收益（返回 ok=true 且 entryType="" 表示全部收益类）。
+// "7"：冻结释放（activate_unfreeze*，由 filter 去重配对）。
+// "6" 是冻结资产快照，不走账本（由 CompatRewardList 拦截）。
 // 未知码：ok=false，调用方应返回空列表。
 func ReqTypeToEntryType(reqType string) (entryType string, ok bool) {
 	switch reqType {
@@ -137,6 +139,8 @@ func ReqTypeToEntryType(reqType string) (entryType string, ok bool) {
 		return LedgerMatch, true
 	case "5":
 		return LedgerManage, true
+	case "7":
+		return LedgerActivate, true
 	default:
 		return "", false
 	}
@@ -168,6 +172,8 @@ func ReasonToEntryTypes(reason string) []string {
 		return []string{LedgerMatch}
 	case "manage", "community_base", "5", "area_two":
 		return []string{LedgerManage}
+	case "unfreeze", "activate", "activate_unfreeze", "7":
+		return []string{LedgerActivate, LedgerActivateIspay}
 	case "admin_adjust":
 		return []string{LedgerAdminAdjust}
 	case "withdraw", "extract":
@@ -312,9 +318,6 @@ func amountStr(d decimal.Decimal) string {
 func toRewardItem(e *LedgerEntry) *RewardItem {
 	usdt := e.Amount
 	ispay := decimal.Zero
-	if IsRewardEntry(e.EntryType) && usdt.IsPositive() {
-		ispay = money.Round(usdt.Div(IspaySpotFallback()))
-	}
 	return &RewardItem{
 		ID:          e.ID,
 		Amount:      amountStr(usdt),
@@ -380,28 +383,17 @@ func RewardDetail(e *LedgerEntry) string {
 	kv := parseRemarkKV(e.Remark)
 	switch RewardFamily(e.EntryType) {
 	case LedgerStatic:
-		parts := []string{}
-		if oid := orderIDStr(e.OrderID); oid != "" {
-			parts = append(parts, "订单#"+oid)
-		} else if kv["order"] != "" {
-			parts = append(parts, "订单#"+kv["order"])
+		if kv["day"] != "" {
+			return "第" + kv["day"] + "天"
 		}
 		if kv["days"] != "" {
-			parts = append(parts, kv["days"]+"天档")
+			return kv["days"] + "天档"
 		}
-		if kv["day"] != "" {
-			parts = append(parts, "第"+kv["day"]+"天")
-		}
-		return strings.Join(parts, " · ")
+		return ""
 	case LedgerDirect:
-		parts := []string{}
-		if oid := orderIDStr(e.OrderID); oid != "" {
-			parts = append(parts, "来源订单#"+oid)
-		} else if kv["order"] != "" {
-			parts = append(parts, "来源订单#"+kv["order"])
-		}
+		parts := []string{"直推到账"}
 		if kv["rate"] != "" {
-			parts = append(parts, "费率 "+kv["rate"])
+			parts = append(parts, "费率 "+formatRatePct(kv["rate"]))
 		}
 		return strings.Join(parts, " · ")
 	case LedgerMatch:
@@ -410,24 +402,184 @@ func RewardDetail(e *LedgerEntry) string {
 			parts = append(parts, "对碰额 "+kv["pair"])
 		}
 		if kv["rate"] != "" {
-			parts = append(parts, "费率 "+kv["rate"])
-		}
-		if kv["cap"] != "" {
-			parts = append(parts, "封顶 "+kv["cap"])
+			parts = append(parts, "费率 "+formatRatePct(kv["rate"]))
 		}
 		return strings.Join(parts, " · ")
 	case LedgerManage:
-		parts := []string{}
 		if kv["gen"] != "" {
-			parts = append(parts, "第"+kv["gen"]+"代")
+			return "第" + kv["gen"] + "代"
 		}
-		if kv["source"] != "" {
-			parts = append(parts, "来源用户#"+kv["source"])
-		}
-		return strings.Join(parts, " · ")
+		return ""
+	case LedgerActivate:
+		return freezeReleaseDetail(e.Remark)
 	default:
 		return e.Remark
 	}
+}
+
+func formatRatePct(raw string) string {
+	d, err := decimal.NewFromString(strings.TrimSpace(raw))
+	if err != nil {
+		return raw
+	}
+	if d.GreaterThan(decimal.NewFromInt(1)) {
+		return money.Display(d) + "%"
+	}
+	return money.Display(d.Mul(decimal.NewFromInt(100))) + "%"
+}
+
+func freezeReleaseDetail(remark string) string {
+	switch strings.TrimSpace(remark) {
+	case remarkActivateUSDT, remarkActivateIspay:
+		return "激活解冻至可提现"
+	case remarkDailyLockUSDT, remarkDailyLockIspay:
+		return "日结按封顶解冻"
+	case remarkOverflowOrderUnlock:
+		return "买单解冻超额冻结"
+	case remarkOverflowClear72h:
+		return "到期清除（不转入可提现）"
+	default:
+		if strings.Contains(remark, "overflow clear") {
+			return "到期清除（不转入可提现）"
+		}
+		return remark
+	}
+}
+
+func freezeReleaseName(remark string) string {
+	switch strings.TrimSpace(remark) {
+	case remarkOverflowClear72h:
+		return "冻结清除"
+	case remarkOverflowOrderUnlock:
+		return "超额解冻"
+	case remarkDailyLockUSDT, remarkDailyLockIspay:
+		return "日结解冻"
+	case remarkActivateUSDT, remarkActivateIspay:
+		return "激活解冻"
+	default:
+		if strings.Contains(remark, "overflow clear") {
+			return "冻结清除"
+		}
+		return "冻结释放"
+	}
+}
+
+type freezePairKey struct {
+	remark string
+	settle string
+	order  string
+}
+
+func freezePairOf(e *LedgerEntry) freezePairKey {
+	return freezePairKey{
+		remark: freezeRemarkFamily(e.Remark),
+		settle: settleDateStr(e.SettleDate),
+		order:  orderIDStr(e.OrderID),
+	}
+}
+
+func freezeRemarkFamily(remark string) string {
+	switch strings.TrimSpace(remark) {
+	case remarkActivateUSDT, remarkActivateIspay:
+		return "activate"
+	case remarkDailyLockUSDT, remarkDailyLockIspay:
+		return "daily"
+	case remarkOverflowOrderUnlock:
+		return "order_unlock"
+	case remarkOverflowClear72h:
+		return "clear"
+	default:
+		if strings.Contains(remark, "overflow clear") {
+			return "clear"
+		}
+		return strings.TrimSpace(remark)
+	}
+}
+
+func isOverflowClearRemark(remark string) bool {
+	r := strings.TrimSpace(remark)
+	return r == remarkOverflowClear72h || strings.Contains(r, "overflow clear")
+}
+
+// filterFreezeRelease 冻结释放明细：只展示解冻入账与到期清除，U/ISPAY 配对，去掉 lock 侧对账行。
+func filterFreezeRelease(items []*LedgerEntry) []*RewardItem {
+	ispayCredit := map[freezePairKey]decimal.Decimal{}
+	ispayBurn := map[freezePairKey]decimal.Decimal{}
+	for _, e := range items {
+		if e == nil || e.EntryType != LedgerActivateIspay {
+			continue
+		}
+		k := freezePairOf(e)
+		if e.BalanceKind == BalanceIspay && e.Amount.IsPositive() {
+			ispayCredit[k] = money.Round(e.Amount)
+		}
+		if e.BalanceKind == BalanceLockIspay && e.Amount.IsNegative() && isOverflowClearRemark(e.Remark) {
+			ispayBurn[k] = money.Round(e.Amount.Abs())
+		}
+	}
+	pairedCredit := map[freezePairKey]bool{}
+	pairedBurn := map[freezePairKey]bool{}
+	out := make([]*RewardItem, 0)
+	for _, e := range items {
+		if e == nil || e.EntryType != LedgerActivate {
+			continue
+		}
+		k := freezePairOf(e)
+		if e.BalanceKind == BalanceAvailable && e.Amount.IsPositive() {
+			item := toRewardItem(e)
+			item.Name = freezeReleaseName(e.Remark)
+			item.Detail = freezeReleaseDetail(e.Remark)
+			item.Reason = "unfreeze"
+			if v, ok := ispayCredit[k]; ok {
+				item.AmountTwo = amountStr(v)
+				pairedCredit[k] = true
+			} else {
+				item.AmountTwo = "0"
+			}
+			out = append(out, item)
+			continue
+		}
+		if e.BalanceKind == BalanceLock && e.Amount.IsNegative() && isOverflowClearRemark(e.Remark) {
+			item := toRewardItem(e)
+			item.Amount = amountStr(e.Amount.Abs())
+			item.Name = freezeReleaseName(e.Remark)
+			item.Detail = freezeReleaseDetail(e.Remark)
+			item.Reason = "unfreeze_clear"
+			if v, ok := ispayBurn[k]; ok {
+				item.AmountTwo = amountStr(v)
+				pairedBurn[k] = true
+			} else {
+				item.AmountTwo = "0"
+			}
+			out = append(out, item)
+		}
+	}
+	for _, e := range items {
+		if e == nil || e.EntryType != LedgerActivateIspay {
+			continue
+		}
+		k := freezePairOf(e)
+		if e.BalanceKind == BalanceIspay && e.Amount.IsPositive() && !pairedCredit[k] {
+			item := toRewardItem(e)
+			item.Amount = "0"
+			item.AmountTwo = amountStr(e.Amount)
+			item.Name = freezeReleaseName(e.Remark)
+			item.Detail = freezeReleaseDetail(e.Remark)
+			item.Reason = "unfreeze_ispay"
+			out = append(out, item)
+			continue
+		}
+		if e.BalanceKind == BalanceLockIspay && e.Amount.IsNegative() && isOverflowClearRemark(e.Remark) && !pairedBurn[k] {
+			item := toRewardItem(e)
+			item.Amount = "0"
+			item.AmountTwo = amountStr(e.Amount.Abs())
+			item.Name = freezeReleaseName(e.Remark)
+			item.Detail = freezeReleaseDetail(e.Remark)
+			item.Reason = "unfreeze_clear"
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 func paginateRewards(items []*RewardItem, page, pageSize int) []*RewardItem {
@@ -448,7 +600,46 @@ func paginateRewards(items []*RewardItem, page, pageSize int) []*RewardItem {
 	return items[start:end]
 }
 
+func rewardPairOf(e *LedgerEntry) freezePairKey {
+	return freezePairKey{
+		remark: RewardFamily(e.EntryType),
+		settle: settleDateStr(e.SettleDate),
+		order:  orderIDStr(e.OrderID),
+	}
+}
+
+func filterUserRewardPair(items []*LedgerEntry, usdtType string) []*RewardItem {
+	ispayType := IspayEntryType(usdtType)
+	credits := map[freezePairKey]decimal.Decimal{}
+	for _, e := range items {
+		if e == nil || e.EntryType != ispayType || !e.Amount.IsPositive() {
+			continue
+		}
+		k := rewardPairOf(e)
+		credits[k] = money.Round(credits[k].Add(e.Amount))
+	}
+	out := make([]*RewardItem, 0)
+	for _, e := range items {
+		if e == nil || e.EntryType != usdtType || !e.Amount.IsPositive() {
+			continue
+		}
+		item := toRewardItem(e)
+		if v, ok := credits[rewardPairOf(e)]; ok {
+			item.AmountTwo = amountStr(v)
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
 func filterUserRewards(items []*LedgerEntry, want string) []*RewardItem {
+	if want == LedgerActivate {
+		return filterFreezeRelease(items)
+	}
+	switch want {
+	case LedgerStatic, LedgerDirect, LedgerMatch, LedgerManage:
+		return filterUserRewardPair(items, want)
+	}
 	out := make([]*RewardItem, 0, len(items))
 	for _, e := range items {
 		if want != "" {

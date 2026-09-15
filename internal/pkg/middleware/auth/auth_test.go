@@ -81,3 +81,28 @@ func TestRequireAdminJWTStillRejectsUser(t *testing.T) {
 		t.Fatalf("user should not pass admin write: %d", rec.Code)
 	}
 }
+
+func TestSigningKeyMatchesIssuerWhenEmpty(t *testing.T) {
+	issuer := NewTokenIssuer(&conf.Auth{})
+	adminTok, err := issuer.IssueAdmin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := RequireAdminJWT("", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/web3_goods_delete", nil)
+	req.Header.Set("Authorization", "Bearer "+adminTok)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("empty jwt key should verify default-signed admin token: %d", rec.Code)
+	}
+
+	opt := httptest.NewRequest(http.MethodOptions, "/api/admin/web3_goods_delete", nil)
+	optRec := httptest.NewRecorder()
+	h.ServeHTTP(optRec, opt)
+	if optRec.Code != http.StatusNoContent {
+		t.Fatalf("OPTIONS: %d", optRec.Code)
+	}
+}

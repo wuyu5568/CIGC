@@ -2,8 +2,10 @@ package biz
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
+	"math/big"
 	"strings"
 	"time"
 
@@ -51,9 +53,18 @@ type Order struct {
 	UpdatedAt     time.Time
 }
 
-// FormatOrderNo 认购订单编号，如 C000016。
+// FormatOrderNo 旧单缺省编号：C + 6 位 ID。新单用 RandomOrderNo。
 func FormatOrderNo(id uint64) string {
 	return fmt.Sprintf("C%06d", id)
+}
+
+// RandomOrderNo 新单编号：C + 随机六位数字。
+func RandomOrderNo() string {
+	n, err := rand.Int(rand.Reader, big.NewInt(1000000))
+	if err != nil || n == nil {
+		return FormatOrderNo(uint64(time.Now().UnixNano() % 1000000))
+	}
+	return fmt.Sprintf("C%06d", n.Int64())
 }
 
 // FormatOrderSource 编号与金额的组合展示。
@@ -356,12 +367,6 @@ func normalizeWeb3Goods(in *Web3GoodsInput, create bool) error {
 	in.Image = strings.TrimSpace(in.Image)
 	in.Amount = money.Round(in.Amount)
 	in.DailyCap = money.Round(in.DailyCap)
-	if in.Name == "" {
-		return ErrPackageTitle
-	}
-	if in.Desc == "" {
-		return ErrPackageDesc
-	}
 	if !in.Amount.IsPositive() {
 		return ErrInvalidAmount
 	}
@@ -458,7 +463,7 @@ func (uc *OrderUseCase) CreateWeb3Goods(ctx context.Context, in *Web3GoodsInput)
 	return uc.packages.Create(ctx, in.toPackage(0, in.Image, in.Detail))
 }
 
-// UpdateWeb3Goods 编辑商品。不传图片/详情则保留原文。
+// UpdateWeb3Goods 编辑商品。不传图片/详情则保留原文；传空字符串则清空。
 func (uc *OrderUseCase) UpdateWeb3Goods(ctx context.Context, in *Web3GoodsInput) (*Package, error) {
 	if in == nil {
 		return nil, ErrPackageNotFound

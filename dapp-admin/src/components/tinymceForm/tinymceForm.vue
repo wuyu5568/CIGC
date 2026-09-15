@@ -1,5 +1,5 @@
 <template>
-    <Editor id="tinymce" v-model="tinymceHtml" :init="editorInit" />
+    <Editor :id="editorId" v-model="tinymceHtml" :init="editorInit" />
 </template>
 
 <script>
@@ -15,6 +15,9 @@
     import 'tinymce/plugins/table'
     import 'tinymce/plugins/lists'
     import 'tinymce/plugins/wordcount'
+
+    const assetBase = (process.env.BASE_URL || '/admin/').replace(/\/?$/, '/')
+
     export default {
         name: "tinymceForm",
         components: { Editor },
@@ -26,6 +29,10 @@
             height:{
                 type:Number,
                 default:500
+            },
+            editorId:{
+                type:String,
+                default:"tinymce"
             },
             uploadHandler:{
                 type:Function,
@@ -40,11 +47,15 @@
         computed:{
             editorInit(){
                 return{
-                    selector: '#tinymce',
-                    language_url: '/tinymce/langs/zh_CN.js',
+                    selector: '#' + this.editorId,
+                    language_url: assetBase + 'tinymce/langs/zh_CN.js',
                     language: 'zh_CN',
-                    skin_url: '/tinymce/skins/ui/oxide',
+                    skin_url: assetBase + 'tinymce/skins/ui/oxide',
                     height: this.height,
+                    zindex: 3000,
+                    convert_urls: false,
+                    relative_urls: false,
+                    remove_script_host: false,
                     mobile: {
                         menubar: true,
                         toolbar_drawer:true,

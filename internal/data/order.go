@@ -184,15 +184,27 @@ func (r *orderRepo) Create(ctx context.Context, o *biz.Order) (*biz.Order, error
 	if err := r.data.Session(ctx).Omit("order_no").Create(&m).Error; err != nil {
 		return nil, err
 	}
-	no := strings.TrimSpace(o.OrderNo)
-	if no == "" {
-		no = biz.FormatOrderNo(m.ID)
+	fixed := strings.TrimSpace(o.OrderNo)
+	var last error
+	for i := 0; i < 24; i++ {
+		no := fixed
+		if no == "" {
+			no = biz.RandomOrderNo()
+		}
+		if err := r.data.Session(ctx).Model(&m).Update("order_no", no).Error; err != nil {
+			last = err
+			if fixed != "" || !isDuplicateKey(err) {
+				return nil, err
+			}
+			continue
+		}
+		m.OrderNo = no
+		return toBizOrder(&m), nil
 	}
-	if err := r.data.Session(ctx).Model(&m).Update("order_no", no).Error; err != nil {
-		return nil, err
+	if last == nil {
+		last = errors.New("allocate order_no")
 	}
-	m.OrderNo = no
-	return toBizOrder(&m), nil
+	return nil, last
 }
 
 func (r *orderRepo) FindByID(ctx context.Context, id uint64) (*biz.Order, error) {

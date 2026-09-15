@@ -209,9 +209,9 @@ func ConfigMeta(key string) (group, hint, effect string) {
 	case ConfigWithdrawFeeIspay:
 		return "提现", "0 表示免手续费。ISPAY 到账 = 申请额 − 手续费。", "之后新申请生效。链上打款仍未开通。"
 	case ConfigWithdrawDaily:
-		return "提现", "上海自然日 USDT 累计申请上限；0 不限制。", "立刻按当天已申请额计算剩余。"
+		return "提现", "USDT 单笔申请上限；0 不限制。同一天可多次提现。", "之后新申请生效。"
 	case ConfigWithdrawDailyIspay:
-		return "提现", "上海自然日 ISPAY 累计申请上限；0 不限制。", "立刻按当天已申请额计算剩余。"
+		return "提现", "ISPAY 单笔申请上限；0 不限制。同一天可多次提现。", "之后新申请生效。"
 	case ConfigIspayPrice:
 		return "价格", "测试用交易所现价（U）。拆一半 U / 一半 ispay 时用。", "立刻影响新入账、待释放展示。不是链上真实行情。"
 	case ConfigOverflowHours:

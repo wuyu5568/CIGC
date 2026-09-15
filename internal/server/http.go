@@ -74,6 +74,7 @@ func registerAdminRoutes(srv *khttp.Server, prefix, jwt string, svc *service.App
 	srv.Handle(prefix+"/settle", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.CompatAdminSettle)))
 	srv.Handle(prefix+"/settle_status", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.CompatAdminSettleStatus)))
 	srv.Handle(prefix+"/settle_reset", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.CompatAdminSettleReset)))
+	srv.Handle(prefix+"/test_data_clear", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.CompatAdminTestDataClear)))
 	srv.Handle(prefix+"/deposit_scan", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.CompatAdminDepositScan)))
 	srv.Handle(prefix+"/reward_list", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.CompatAdminRewardList)))
 	srv.Handle(prefix+"/buy_list", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.CompatAdminBuyList)))

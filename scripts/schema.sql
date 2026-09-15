@@ -159,8 +159,8 @@ INSERT INTO business_configs (config_key, name, value, sort_order) VALUES
 ('min_withdraw_amount_ispay', 'ISPAY 单笔最低提现', '0', 41),
 ('withdraw_fee_rate', 'USDT 提现手续费', '0.10', 42),
 ('withdraw_fee_rate_ispay', 'ISPAY 提现手续费', '0', 43),
-('withdraw_daily_limit', 'USDT 每日提现上限', '1000', 44),
-('withdraw_daily_limit_ispay', 'ISPAY 每日提现上限', '1000', 45),
+('withdraw_daily_limit', 'USDT 单笔提现上限', '1000', 44),
+('withdraw_daily_limit_ispay', 'ISPAY 单笔提现上限', '1000', 45),
 ('ispay_price', 'ISPAY 测试现价', '2000', 50),
 ('overflow_clear_hours', '冻结清除时间', '72', 60),
 ('withdraw_enabled', '提现开关', '1', 70)

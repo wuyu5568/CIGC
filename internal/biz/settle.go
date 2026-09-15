@@ -91,12 +91,27 @@ type SettleResetResult struct {
 	NextTestDate string
 }
 
+// TestDataClearResult 清测试业务数据、保留用户账户。
+type TestDataClearResult struct {
+	UsersKept        int
+	OrdersCleared    int
+	LedgerCleared    int
+	HoldsCleared     int
+	WithdrawsCleared int
+}
+
+// TestDataRepo 清订单/流水/冻结等，不删用户与邀请/安置。
+type TestDataRepo interface {
+	ClearKeepUsers(ctx context.Context) (*TestDataClearResult, error)
+}
+
 // SettleStatusView 管理端今日/最近一次日结快照。
 type SettleStatusView struct {
 	TodayDate    string
 	TodaySettled bool
 	AllowForce   bool
 	NextTestDate string
+	BusinessDate string
 	Today        *SettleRun
 	Latest       *SettleRun
 }
@@ -119,6 +134,7 @@ type SettleUseCase struct {
 	placements PlacementRepo
 	matches    MatchRepo
 	daily      DailyCapRepo
+	testData   TestDataRepo
 	ispay      IspayPrice
 	tx         TxRunner
 	allowForce bool
@@ -175,6 +191,14 @@ func NewSettleUseCase(
 	}
 }
 
+// SetTestData 注入测试数据清理仓储；生产由 Data 注入。仅 allow_force_settle 可调用。
+func (uc *SettleUseCase) SetTestData(repo TestDataRepo) {
+	if uc == nil {
+		return
+	}
+	uc.testData = repo
+}
+
 func (uc *SettleUseCase) spot(ctx context.Context) decimal.Decimal {
 	if uc != nil && uc.configs != nil {
 		if p := configSpot(ctx, uc.configs); p.IsPositive() {
@@ -206,12 +230,33 @@ func (uc *SettleUseCase) creditSplit(ctx context.Context, userID uint64, orderID
 	return uc.creditHalf(ctx, userID, orderID, entryType, ispayType, full, settleDay, remark)
 }
 
-func (uc *SettleUseCase) settleDayOr(day *time.Time) time.Time {
+func (uc *SettleUseCase) settleDayOr(ctx context.Context, day *time.Time) time.Time {
 	if day != nil && !day.IsZero() {
 		return dailyCapDate(*day)
 	}
-	d, _ := uc.settleDay(uc.now())
-	return d
+	return uc.currentBusinessDay(ctx)
+}
+
+// currentBusinessDay 测试日结把日历推到未来后，新冻结/秒结按最近一次结算日记账，
+// 这样 16 号产生的冻结会在 20 号到期，而不是跟 15 号一起在 19 号清掉。
+func (uc *SettleUseCase) currentBusinessDay(ctx context.Context) time.Time {
+	if uc == nil {
+		n := time.Now()
+		return time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, n.Location())
+	}
+	today, _ := uc.settleDay(uc.now())
+	if uc.runs == nil {
+		return today
+	}
+	latest, err := uc.runs.FindLatest(ctx)
+	if err != nil || latest == nil {
+		return today
+	}
+	latestDay := uc.dayInZone(latest.SettleDate)
+	if latestDay.After(today) {
+		return latestDay
+	}
+	return today
 }
 
 func (uc *SettleUseCase) creditDynamic(ctx context.Context, userID uint64, orderID *uint64, entryType, ispayType string, full decimal.Decimal, settleDay *time.Time, remark string) error {
@@ -223,7 +268,7 @@ func (uc *SettleUseCase) creditDynamic(ctx context.Context, userID uint64, order
 	if err != nil {
 		return err
 	}
-	day := uc.settleDayOr(settleDay)
+	day := uc.settleDayOr(ctx, settleDay)
 	dayCopy := day
 	cap := money.Round(u.CapEffective)
 	under, overflow := full, decimal.Zero
@@ -275,7 +320,7 @@ func (uc *SettleUseCase) creditOverflow(ctx context.Context, userID uint64, orde
 		return nil
 	}
 	now := uc.now()
-	day := uc.settleDayOr(settleDay)
+	day := uc.settleDayOr(ctx, settleDay)
 	return uc.daily.CreateHold(ctx, &CapOverflowHold{
 		UserID:     userID,
 		Value:      money.Round(full),
@@ -406,20 +451,25 @@ func (uc *SettleUseCase) ResetTestDay(ctx context.Context) (*SettleResetResult, 
 	return &SettleResetResult{TodayDate: dateStr, Deleted: deleted, NextTestDate: nextStr}, nil
 }
 
+// ClearTestData 清订单、流水、冻结、日结等测试数据，保留全部用户及邀请/安置。
+// 余额、已支付、日封顶归零。仅 allow_force_settle 可用。
+func (uc *SettleUseCase) ClearTestData(ctx context.Context) (*TestDataClearResult, error) {
+	if uc == nil {
+		return nil, ErrForceSettleDisabled
+	}
+	uc.mu.Lock()
+	defer uc.mu.Unlock()
+	if !uc.allowForce {
+		return nil, ErrForceSettleDisabled
+	}
+	if uc.testData == nil {
+		return nil, ErrForceSettleDisabled
+	}
+	return uc.testData.ClearKeepUsers(ctx)
+}
+
 func (uc *SettleUseCase) displaySettleDate(ctx context.Context) string {
-	_, today := uc.settleDay(uc.now())
-	if uc.runs == nil {
-		return today
-	}
-	latest, err := uc.runs.FindLatest(ctx)
-	if err != nil || latest == nil {
-		return today
-	}
-	latestStr := uc.dayInZone(latest.SettleDate).Format("2006-01-02")
-	if latestStr > today {
-		return latestStr
-	}
-	return today
+	return uc.currentBusinessDay(ctx).Format("2006-01-02")
 }
 
 type orderStaticAcc struct {
@@ -570,7 +620,7 @@ func (uc *SettleUseCase) OnOrderPaid(ctx context.Context, o *Order) error {
 	if err := uc.releaseLockExcludingOverflow(ctx, o.UserID, cap, nil, remarkActivateUSDT, remarkActivateIspay); err != nil {
 		return err
 	}
-	settleDay, _ := uc.settleDay(uc.now())
+	settleDay := uc.currentBusinessDay(ctx)
 	dayCopy := settleDay
 	if _, err := uc.creditDirectForOrder(ctx, o, uc.directRate(ctx), &dayCopy); err != nil {
 		return err
@@ -1165,7 +1215,7 @@ func (uc *SettleUseCase) wrapUnheldLockAsOverflow(ctx context.Context, userID ui
 			value = ri
 		}
 	}
-	day := uc.settleDayOr(nil)
+	day := uc.settleDayOr(ctx, nil)
 	return uc.daily.CreateHold(ctx, &CapOverflowHold{
 		UserID:     userID,
 		Value:      value,
@@ -1209,7 +1259,7 @@ func (uc *SettleUseCase) releaseOverflowByOrderCap(ctx context.Context, userID u
 		if !u.IsActivated() {
 			return nil
 		}
-		day, _ := uc.settleDay(uc.now())
+		day := uc.currentBusinessDay(ctx)
 		holds, err := uc.daily.ListActiveHolds(ctx, userID)
 		if err != nil {
 			return err
@@ -1397,8 +1447,9 @@ func (uc *SettleUseCase) expireCapOverflowAt(ctx context.Context, now time.Time)
 func (uc *SettleUseCase) Status(ctx context.Context) (*SettleStatusView, error) {
 	settleDay, dateStr := uc.settleDay(uc.now())
 	view := &SettleStatusView{
-		TodayDate:  dateStr,
-		AllowForce: uc.allowForce,
+		TodayDate:    dateStr,
+		AllowForce:   uc.allowForce,
+		BusinessDate: uc.currentBusinessDay(ctx).Format("2006-01-02"),
 	}
 	if next, nextStr, err := uc.forceSettleDay(ctx); err == nil {
 		_ = next

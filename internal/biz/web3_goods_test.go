@@ -37,20 +37,16 @@ func TestListWeb3GoodsPaginatesWithoutDays(t *testing.T) {
 	}
 }
 
-func TestCreateWeb3GoodsRequiresNameDesc(t *testing.T) {
+func TestCreateWeb3GoodsAllowsEmptyNameDesc(t *testing.T) {
 	pkgs := &memPackages{rows: []*Package{
 		{ID: 1, Amount: decimal.RequireFromString("1000"), Title: "旧", GoodsDesc: "d", ReleaseDays: 300, Enabled: true},
 	}}
 	uc := NewOrderUseCase(pkgs, newMemOrders(newMemUsers()), newMemUsers(), newMemUsers(), &memLedger{})
-	if _, err := uc.CreateWeb3Goods(context.Background(), &Web3GoodsInput{
-		Desc: "y", Amount: decimal.RequireFromString("2000"),
-	}); err != ErrPackageTitle {
-		t.Fatalf("name: %v", err)
-	}
-	if _, err := uc.CreateWeb3Goods(context.Background(), &Web3GoodsInput{
-		Name: "x", Amount: decimal.RequireFromString("2000"),
-	}); err != ErrPackageDesc {
-		t.Fatalf("desc: %v", err)
+	blank, err := uc.CreateWeb3Goods(context.Background(), &Web3GoodsInput{
+		Amount: decimal.RequireFromString("1800"),
+	})
+	if err != nil || blank.Title != "" || blank.GoodsDesc != "" {
+		t.Fatalf("blank name/desc %+v err=%v", blank, err)
 	}
 	got, err := uc.CreateWeb3Goods(context.Background(), &Web3GoodsInput{
 		Name: "牙刷", Desc: "描述", Amount: decimal.RequireFromString("2000"),
@@ -93,6 +89,16 @@ func TestUpdateWeb3GoodsByID(t *testing.T) {
 	}
 	if got.Image != "/uploads/new.png" {
 		t.Fatalf("replace image %+v", got)
+	}
+	got, err = uc.UpdateWeb3Goods(context.Background(), &Web3GoodsInput{
+		ID: 1, Name: "", Desc: "", Amount: decimal.RequireFromString("1500"),
+		HasImage: true, Image: "", HasDetail: true, Detail: "",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Title != "" || got.GoodsDesc != "" || got.Image != "" || got.Detail != "" {
+		t.Fatalf("clear fields %+v", got)
 	}
 	off, err := uc.SetWeb3GoodsOnSale(context.Background(), 2, false)
 	if err != nil || off.Enabled {

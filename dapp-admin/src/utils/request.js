@@ -15,33 +15,58 @@ const service = axios.create({
     timeout: 30000 // 请求超时时间
 })
 
+function errorMessage (data, fallback) {
+    if (data && typeof data === 'object') {
+        return data.message || data.reason || fallback
+    }
+    if (typeof data === 'string' && data) {
+        try {
+            const parsed = JSON.parse(data)
+            return parsed.message || parsed.reason || fallback
+        } catch (e) {
+            return data
+        }
+    }
+    return fallback
+}
+
 const err = (error) => {
     if (error.response) {
         const data = error.response.data
-        const token = Vue.ls.get(ACCESS_TOKEN)
-        if (error.response.status === 403) {
+        const status = error.response.status
+        const url = (error.config && error.config.url) || ''
+        if (status === 403) {
             notification.error({
                 message: '没有权限',
-                description: data.message || data.reason || '操作被拒绝'
+                description: errorMessage(data, '操作被拒绝')
             })
             return Promise.reject(error)
         }
-        if (error.response.status === 401 && !(data.result && data.result.isLogin)) {
-            notification.error({
-                message: 'Unauthorized',
-                description: 'Authorization verification failed'
-            })
-            if (token) {
-                store.dispatch('Logout').then(() => {
-                    setTimeout(() => {
-                        window.location.reload()
-                    }, 1500)
+        if (status === 401 && !(data && data.result && data.result.isLogin)) {
+            const sessionCheck = /my_auth_list/.test(url)
+            const token = Vue.ls.get(ACCESS_TOKEN)
+            if (sessionCheck) {
+                notification.error({
+                    message: '登录已失效',
+                    description: errorMessage(data, '请重新登录')
+                })
+                if (token) {
+                    store.dispatch('Logout').then(() => {
+                        if (window.location.hash.indexOf('/user/login') === -1) {
+                            window.location.hash = '#/user/login'
+                        }
+                    })
+                }
+            } else {
+                notification.error({
+                    message: '请求失败',
+                    description: errorMessage(data, '未授权')
                 })
             }
-        }else{
+        } else {
             notification.error({
                 message: '错误',
-                description: data.message||"网络错误"
+                description: errorMessage(data, '网络错误')
             })
         }
     }
@@ -50,13 +75,22 @@ const err = (error) => {
 
 // request interceptor
 service.interceptors.request.use(config => {
-    const token = Vue.ls.get(ACCESS_TOKEN) || localStorage.getItem('token')
-    console.log('token', token)
+    const token = Vue.ls.get(ACCESS_TOKEN)
+    config.headers = config.headers || {}
     if (token) {
-        config.headers['Authorization'] = `Bearer ${token}` // 让每个请求携带自定义 token 请根据实际情况自行修改
+        const bearer = `Bearer ${token}`
+        config.headers.common = config.headers.common || {}
+        config.headers.common.Authorization = bearer
+        config.headers.Authorization = bearer
+        if (config.method === 'post') {
+            config.headers.post = config.headers.post || {}
+            if (typeof config.headers.post === 'object') {
+                config.headers.post.Authorization = bearer
+            }
+        }
     }
-    if(config.method === "post"){
-        if(config.data instanceof FormData){
+    if (config.method === 'post') {
+        if (config.data instanceof FormData) {
             delete config.headers['Content-type']
             delete config.headers['Content-Type']
         } else {

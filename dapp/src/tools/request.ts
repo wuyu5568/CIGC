@@ -58,8 +58,8 @@ instance.interceptors.response.use(res => {
             showFailToast(err.response?.statusText);
         }
     }
-    /* 自动退出登录 */
-    if (status === 401 || message === "user not found") {
+    /* 自动退出登录：只清用户端自己的 key，避免把管理后台 Access-Token 一并清掉 */
+    if ((status === 401 || message === "user not found") && localStorage.getItem("token")) {
         showFailToast(lang("登录过期"));
         const person = userPerson();
         person.outLogin();

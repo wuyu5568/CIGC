@@ -1,6 +1,6 @@
 import { axios } from '@/utils/request'
-const api8005 = `${projectUrl}/api/admin_dhb`
-const api8006 = `${projectUrl}/api/admin_dhb`
+const api8005 = `${projectUrl}/api/admin_cigc`
+const api8006 = `${projectUrl}/api/admin_cigc`
 export default {
     sub_money: (parameter) => {
         return axios({
@@ -82,6 +82,13 @@ export default {
     settle_reset: (parameter) => {
         return axios({
             url: `${api8005}/settle_reset`,
+            method: 'post',
+            data: parameter || {}
+        })
+    },
+    test_data_clear: (parameter) => {
+        return axios({
+            url: `${api8005}/test_data_clear`,
             method: 'post',
             data: parameter || {}
         })
@@ -334,7 +341,8 @@ export default {
         return axios({
             url: `${api8006}/login`,
             method: 'post',
-            data: parameter
+            data: parameter,
+            notify: false
         })
     },
     admin_list: (parameter) => {

@@ -350,16 +350,12 @@ func (uc *WithdrawUseCase) usedToday(ctx context.Context, userID uint64, asset s
 	return money.Round(used), nil
 }
 
-func (uc *WithdrawUseCase) checkDailyCap(ctx context.Context, userID uint64, asset string, amount decimal.Decimal) error {
+func (uc *WithdrawUseCase) checkPerTxCap(ctx context.Context, asset string, amount decimal.Decimal) error {
 	limit := uc.dailyLimitOf(ctx, asset)
 	if !limit.IsPositive() {
 		return nil
 	}
-	used, err := uc.usedToday(ctx, userID, asset)
-	if err != nil {
-		return err
-	}
-	if money.Round(used.Add(amount)).GreaterThan(limit) {
+	if money.Round(amount).GreaterThan(limit) {
 		return ErrWithdrawDailyCap
 	}
 	return nil
@@ -374,7 +370,7 @@ func splitWithdrawFee(amount, rate decimal.Decimal) (fee, credited decimal.Decim
 	return fee, credited, nil
 }
 
-// WithdrawLimits 用户端最低额、费率与当日额度。
+// WithdrawLimits 用户端最低额、费率与单笔上限。
 type WithdrawLimits struct {
 	Min       decimal.Decimal
 	Rate      decimal.Decimal
@@ -388,18 +384,7 @@ type WithdrawLimits struct {
 	RemainTwo decimal.Decimal
 }
 
-func remainOf(daily, today decimal.Decimal) decimal.Decimal {
-	if !daily.IsPositive() {
-		return decimal.Zero
-	}
-	out := money.Round(daily.Sub(today))
-	if out.IsNegative() {
-		return decimal.Zero
-	}
-	return out
-}
-
-// UserLimits 用户端展示的最低额、费率与当日额度；USDT / ISPAY 分开读配置。
+// UserLimits 用户端展示的最低额、费率与单笔上限；USDT / ISPAY 分开读配置。
 func (uc *WithdrawUseCase) UserLimits(ctx context.Context, userID uint64) WithdrawLimits {
 	out := WithdrawLimits{
 		Min:     decimal.RequireFromString(defaultMinWithdraw),
@@ -422,8 +407,8 @@ func (uc *WithdrawUseCase) UserLimits(ctx context.Context, userID uint64) Withdr
 	if used, err := uc.usedToday(ctx, userID, WithdrawAssetIspay); err == nil {
 		out.TodayTwo = used
 	}
-	out.Remain = remainOf(out.Daily, out.Today)
-	out.RemainTwo = remainOf(out.DailyTwo, out.TodayTwo)
+	out.Remain = out.Daily
+	out.RemainTwo = out.DailyTwo
 	return out
 }
 
@@ -462,7 +447,7 @@ func (uc *WithdrawUseCase) CreateAsset(ctx context.Context, userID uint64, amoun
 	if errFee != nil {
 		return nil, errFee
 	}
-	if err := uc.checkDailyCap(ctx, userID, asset, amount); err != nil {
+	if err := uc.checkPerTxCap(ctx, asset, amount); err != nil {
 		return nil, err
 	}
 	if asset == WithdrawAssetIspay {

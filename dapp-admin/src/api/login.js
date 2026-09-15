@@ -15,7 +15,7 @@ import { axios } from '@/utils/request'
 //登录
 export function login (parameter) {
     return axios({
-        url: '/admin_dhb/login',
+        url: '/admin_cigc/login',
         method: 'post',
         data: parameter
     })
@@ -43,12 +43,6 @@ export function getInfo () {
 
 //登出
 export function logout () {
-    return axios({
-        url: '/auth/logout',
-        method: 'post',
-        headers: {
-            'Content-Type': 'application/json;charset=UTF-8'
-        }
-    })
+    return Promise.resolve()
 }
 

@@ -66,32 +66,46 @@
           <p>{{ allIncome }}</p>
         </div>
       </div>
-      <van-tabs v-model:active="active" @click-tab="onClickTab">
+      <van-tabs v-model:active="active" :ellipsis="false" @click-tab="onClickTab">
         <van-tab v-for="value in menuType" :title="value[1]" :name="value[0]">
           <van-empty v-if="listEmpty" :description="lang('暂无数据')" :image="emptyImage" />
           <div class="income-list" v-else>
             <div class="income-list-main">
-              <div class="income-list-item" v-for="(item, index) in currentList" :key="item.id || index">
+              <div
+                class="income-list-item"
+                :class="{ 'is-clear': isClear(item) }"
+                v-for="(item, index) in currentList"
+                :key="item.id || index"
+              >
                 <div class="income-list-item-info">
                   <template v-if="active === '1'">
-                    <p>{{ item.title || item.goods || '-' }}</p>
-                    <p>{{ lang('套餐内容') }}：{{ item.goods || item.title || '-' }}</p>
-                    <p>{{ lang('套餐金额') }} {{ displayAmount(item.amount) }} USDT · {{ item.release_days || '-' }} {{ lang('天') }}</p>
-                    <p>{{ lang('购买日期') }}：{{ item.purchase_date || item.paid_at || item.createdAt || item.created_at || '-' }}</p>
+                    <p class="title">{{ item.goods || item.title || '-' }}</p>
+                    <p class="sub">{{ item.release_days || '-' }} {{ lang('天') }}</p>
+                    <p class="date">{{ lang('购买日期') }}：{{ item.purchase_date || item.paid_at || item.createdAt || item.created_at || '-' }}</p>
+                    <p class="sub">{{ lang('已释放') }} {{ displayAmount(item.released_usdt) }} USDT / {{ displayAmount(item.released_ispay) }} ISPAY</p>
+                    <p class="sub">{{ lang('待释放') }} {{ displayAmount(item.pending_usdt) }} USDT / {{ displayAmount(item.pending_ispay) }} ISPAY</p>
                   </template>
                   <template v-else>
-                    <p>
-                      <span>USDT {{ lang('数量') }}：{{ item.amount }}</span>
-                    </p>
-                    <p v-if="item.orderTitle || item.orderNo" style="font-size: 13px;">
-                      {{ item.orderTitle || item.orderNo }}
-                    </p>
-                    <p v-if="item.detail" style="font-size: 13px;">{{ item.detail }}</p>
-                    <p v-else-if="item.address" style="font-size: 13px;">{{ formatAddress(item.address) }}</p>
-                    <p style="font-size: 12px;">{{ item.settleDate || item.createdAt }}</p>
+                    <p class="title">{{ rowTitle(item) }}</p>
+                    <p class="sub" v-if="showOrderAmount(item)">{{ lang('订单金额') }} {{ displayAmount(item.orderAmount) }} USDT</p>
+                    <p class="sub" v-if="rowTypeName(item)">{{ rowTypeName(item) }}</p>
+                    <p class="sub" v-if="item.detail">{{ item.detail }}</p>
+                    <p class="date" v-if="item.settleDate || item.createdAt">{{ item.settleDate || item.createdAt }}</p>
                   </template>
                 </div>
-                <div v-if="active !== '1'" class="income-list-item-money">{{ item.reward || item.amount }}</div>
+                <div class="income-list-item-money">
+                  <template v-if="active === '1'">
+                    {{ displayAmount(item.amount) }} USDT
+                  </template>
+                  <template v-else-if="isClear(item)">
+                    {{ lang('已清除') }}
+                    <small v-if="clearMoneyLine(item)">{{ clearMoneyLine(item) }}</small>
+                  </template>
+                  <template v-else>
+                    {{ rightAmount(item) }}
+                    <small v-if="rightAmountTwo(item)">{{ rightAmountTwo(item) }}</small>
+                  </template>
+                </div>
               </div>
               <Pagination
                 v-if="active !== '1'"
@@ -175,10 +189,12 @@ let trail = $ref([])
 
 const menuType = [
   ['1', 'web3 ' + lang('认购')],
-  ['2', lang('静态收益')],
+  ['2', lang('静态释放')],
   ['3', lang('直推收益')],
   ['4', lang('对碰奖励')],
   ['5', lang('管理奖励')],
+  ['6', lang('冻结资产')],
+  ['7', lang('冻结释放')],
 ]
 
 const currentList = $computed(() => active === '1' ? orderList : rewardList)
@@ -190,11 +206,45 @@ const shortAddr = (addr) => {
   return addr.slice(0, 6) + '…' + addr.slice(-4)
 }
 
-const formatAddress = (value) => {
-  if (!value) return ''
-  const frontSix = value.slice(0, 6);
-  const backSix = value.slice(-4);
-  return frontSix + '...' + backSix;
+const nz = (v) => {
+  const s = displayAmount(v)
+  return s !== '0' && s !== ''
+}
+
+const isClear = (item) => item?.reason === 'unfreeze_clear'
+
+const rowTitle = (item) => {
+  if (item?.orderNo) return lang('订单') + ' ' + item.orderNo
+  if (item?.sourceAddress) return lang('来源') + ' ' + shortAddr(item.sourceAddress)
+  return item?.name || '-'
+}
+
+const showOrderAmount = (item) => !!item?.orderNo && nz(item.orderAmount)
+
+const rowTypeName = (item) => {
+  if (active !== '6' && active !== '7') return ''
+  if (item?.orderNo || item?.sourceAddress) return item?.name || ''
+  return ''
+}
+
+const rightAmount = (item) => {
+  const a = displayAmount(item?.amount || item?.reward)
+  if (active === '6') return a + ' USDT'
+  return '+' + a + ' USDT'
+}
+
+const rightAmountTwo = (item) => {
+  if (!nz(item?.amountTwo)) return ''
+  const a = displayAmount(item.amountTwo)
+  if (active === '6') return a + ' ISPAY'
+  return '+' + a + ' ISPAY'
+}
+
+const clearMoneyLine = (item) => {
+  const parts = []
+  if (nz(item?.amount)) parts.push(displayAmount(item.amount) + ' USDT')
+  if (nz(item?.amountTwo)) parts.push(displayAmount(item.amountTwo) + ' ISPAY')
+  return parts.join(' · ')
 }
 
 const toInviteBranch = (it) => {
@@ -730,30 +780,53 @@ const handleBack = () => {
             background: #29313C;
           }
           .income-list-item-info {
-            width: 100%;
-            flex-grow: 1;
+            min-width: 0;
+            flex: 1;
             display: flex;
             flex-direction: column;
             gap: 4px;
             p {
+              margin: 0;
               width: 100%;
               color: #CCC;
-              display: flex;
-              flex-grow: 1;
-              justify-content: space-between;
-              &:nth-child(2) {
+              font-size: 14px;
+              line-height: 1.4;
+              &.title {
+                color: #fff;
+                font-weight: 500;
+              }
+              &.sub {
+                font-size: 13px;
+              }
+              &.date {
                 font-size: 12px;
               }
             }
           }
           .income-list-item-money {
             flex-shrink: 0;
-            width: 100px;
+            min-width: 96px;
+            width: auto;
             text-align: right;
-            color: #CCC;
-            font-size: 15px;
+            color: #fff;
+            font-size: 14px;
             font-weight: 500;
-            padding: 0 10px;
+            padding: 0 4px 0 8px;
+            line-height: 1.35;
+            small {
+              display: block;
+              margin-top: 2px;
+              font-size: 12px;
+              font-weight: 400;
+              color: #CCC;
+            }
+          }
+          &.is-clear {
+            .income-list-item-info p.title,
+            .income-list-item-money {
+              color: #8a9199;
+              font-weight: 400;
+            }
           }
         }
       }

@@ -49,6 +49,7 @@ func newApp(cfg *conf.Bootstrap, d *data.Data, logger *slog.Logger) (*kratos.App
 		d,
 		&cfg.App,
 	)
+	settle.SetTestData(data.NewTestDataRepo(d))
 	ledger := biz.NewLedgerUseCase(data.NewLedgerRepo(d), data.NewOrderRepo(d), data.NewUserRepo(d))
 	withdraw := biz.NewWithdrawUseCase(
 		data.NewUserRepo(d),

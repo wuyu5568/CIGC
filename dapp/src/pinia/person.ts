@@ -291,7 +291,9 @@ export default defineStore('person', {
     },
     /* 自动退出系统 */
     outLogin() {
-      localStorage.clear()
+      localStorage.removeItem('token')
+      localStorage.removeItem('account')
+      localStorage.removeItem('sign')
       this.$reset()
       this.init()
     }

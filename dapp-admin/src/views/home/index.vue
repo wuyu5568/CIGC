@@ -3,6 +3,7 @@
         <a-card class="cardCon" title="数据" :loading="loading">
             <template slot="extra">
                 <span style="margin-right:12px">{{ settleHint }}</span>
+                <a-button style="margin-right:8px" type="danger" :loading="clearing" @click="clearTestData">清除测试数据</a-button>
                 <a-button style="margin-right:8px" :loading="resetting" @click="resetTestDay">重置测试日</a-button>
                 <a-button type="primary" :loading="settling" @click="runSettle">测试日结算</a-button>
             </template>
@@ -29,6 +30,7 @@ export default {
             loading: true,
             settling: false,
             resetting: false,
+            clearing: false,
             data: {},
             settleHint: '',
             cards: [
@@ -84,8 +86,16 @@ export default {
                 const day = res.settle_today || ''
                 const done = res.settle_today_done
                 const next = res.settle_next_test || ''
+                const biz = res.settle_business_date || ''
                 const today = day ? (done ? `${day} 已结算` : `${day} 未结算`) : ''
-                this.settleHint = next ? `${today}；测试将结算 ${next}` : today
+                let hint = today
+                if (biz && biz !== day) {
+                    hint = hint ? `${hint}；业务日 ${biz}` : `业务日 ${biz}`
+                }
+                if (next) {
+                    hint = hint ? `${hint}；下次结算 ${next}` : `下次结算 ${next}`
+                }
+                this.settleHint = hint
             }).catch(() => {
                 this.settleHint = ''
             })
@@ -93,7 +103,7 @@ export default {
         runSettle() {
             this.$confirm({
                 title: '测试日结算',
-                content: '将结算下一日（静态释放、补漏动态、按封顶解冻）。冻结批次按该日 0:00 判断是否已满冻结日+4天，到期只清零、不转入可提现。不是重跑今天。仅测试用。',
+                content: '将结算下一日（静态释放、补漏动态、按封顶解冻）。结算完成后，新产生的冻结按该测试日记账：到期为冻结日+4天 00:00，只清零、不转入可提现。例如点到 16 号后再产生的冻结，要再点到 20 号才清；点到 16 号之前产生的冻结，点到 19 号就清。',
                 centered: true,
                 onOk: () => {
                     this.settling = true
@@ -127,6 +137,26 @@ export default {
                         this.getSettle()
                     }).finally(() => {
                         this.resetting = false
+                    })
+                },
+            })
+        },
+        clearTestData() {
+            this.$confirm({
+                title: '清除测试数据',
+                content: '将删除订单、流水、冻结、充值入账、提现和日结记录，并把所有账户余额、已支付、日封顶归零。用户地址、邀请关系和双轨安置会保留。此操作不可恢复。',
+                centered: true,
+                okType: 'danger',
+                onOk: () => {
+                    this.clearing = true
+                    return Gai.test_data_clear().then((res) => {
+                        const users = res.users_kept || 0
+                        const orders = res.orders_cleared || 0
+                        this.$message.success(`已清测试数据：保留 ${users} 个账户，删除 ${orders} 笔订单`)
+                        this.getList()
+                        this.getSettle()
+                    }).finally(() => {
+                        this.clearing = false
                     })
                 },
             })

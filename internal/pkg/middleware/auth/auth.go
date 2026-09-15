@@ -62,6 +62,13 @@ func parseBearerUID(tokenStr string, key []byte) (uint64, bool) {
 	return uint64(raw), true
 }
 
+func signingKey(jwtKey string) []byte {
+	if strings.TrimSpace(jwtKey) == "" {
+		return []byte("change-me")
+	}
+	return []byte(jwtKey)
+}
+
 func parseBearerAdmin(tokenStr string, key []byte) bool {
 	token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
 		return key, nil
@@ -79,8 +86,12 @@ func parseBearerAdmin(tokenStr string, key []byte) bool {
 
 // RequireAdminJWT 校验管理端 Bearer JWT。
 func RequireAdminJWT(jwtKey string, next http.HandlerFunc) http.HandlerFunc {
-	key := []byte(jwtKey)
+	key := signingKey(jwtKey)
 	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		authz := r.Header.Get("Authorization")
 		if authz == "" || !strings.HasPrefix(authz, "Bearer ") {
 			http.Error(w, `{"message":"unauthorized"}`, http.StatusUnauthorized)
@@ -97,8 +108,12 @@ func RequireAdminJWT(jwtKey string, next http.HandlerFunc) http.HandlerFunc {
 
 // RequireJWT 校验用户端 Bearer JWT，并把 uid 放入 context。
 func RequireJWT(jwtKey string, next http.HandlerFunc) http.HandlerFunc {
-	key := []byte(jwtKey)
+	key := signingKey(jwtKey)
 	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		authz := r.Header.Get("Authorization")
 		if authz == "" || !strings.HasPrefix(authz, "Bearer ") {
 			http.Error(w, `{"message":"unauthorized"}`, http.StatusUnauthorized)
@@ -120,8 +135,12 @@ func unauthorized(w http.ResponseWriter) {
 
 // RequireAdminOrUserGET 管理端 JWT 放行任意方法；用户 JWT 仅放行 GET。缺失或无效 token 返回 401。
 func RequireAdminOrUserGET(jwtKey string, next http.HandlerFunc) http.HandlerFunc {
-	key := []byte(jwtKey)
+	key := signingKey(jwtKey)
 	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		authz := r.Header.Get("Authorization")
 		if authz == "" || !strings.HasPrefix(authz, "Bearer ") {
 			unauthorized(w)
@@ -147,7 +166,7 @@ func RequireAdminOrUserGET(jwtKey string, next http.HandlerFunc) http.HandlerFun
 
 // JWT 是 Kratos 中间件形态的用户鉴权（给后续生成路由预留）。
 func JWT(jwtKey string) middleware.Middleware {
-	key := []byte(jwtKey)
+	key := signingKey(jwtKey)
 	return func(handler middleware.Handler) middleware.Handler {
 		return func(ctx context.Context, req interface{}) (interface{}, error) {
 			if tr, ok := transport.FromServerContext(ctx); ok {

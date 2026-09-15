@@ -107,7 +107,8 @@
                 return '80px'
             },
             menus(){
-                return this.mainMenu.find(item => item.path === '/').children;
+                const root = (this.mainMenu || []).find(item => item.path === '/')
+                return (root && root.children) || []
             }
         },
         watch: {

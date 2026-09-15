@@ -364,6 +364,206 @@ func TestSettle_ResetTestDayDisabled(t *testing.T) {
 	}
 }
 
+type memTestData struct {
+	users  *memUsers
+	orders *memOrders
+	led    *memLedger
+	runs   *memSettleRuns
+	daily  *memDailyCap
+	match  *memMatch
+}
+
+func (m *memTestData) ClearKeepUsers(_ context.Context) (*TestDataClearResult, error) {
+	out := &TestDataClearResult{}
+	if m.users != nil {
+		out.UsersKept = len(m.users.byID)
+		for _, u := range m.users.byID {
+			u.AvailableBalance = decimal.Zero
+			u.RechargeBalance = decimal.Zero
+			u.FrozenBalance = decimal.Zero
+			u.FrozenIspay = decimal.Zero
+			u.IspayBalance = decimal.Zero
+			u.LockBalance = decimal.Zero
+			u.LockIspay = decimal.Zero
+			u.PaidAmount = decimal.Zero
+			u.CapEffective = decimal.Zero
+			u.DisabledAt = nil
+		}
+	}
+	if m.orders != nil {
+		out.OrdersCleared = len(m.orders.byID)
+		m.orders.byID = map[uint64]*Order{}
+	}
+	if m.led != nil {
+		out.LedgerCleared = len(m.led.rows)
+		m.led.rows = nil
+	}
+	if m.runs != nil {
+		m.runs.byDate = map[string]*SettleRun{}
+	}
+	if m.daily != nil {
+		out.HoldsCleared = len(m.daily.holds)
+		m.daily.used = map[string]decimal.Decimal{}
+		m.daily.holds = nil
+	}
+	if m.match != nil {
+		m.match.bals = map[uint64]*MatchBalance{}
+		m.match.applied = map[uint64]struct{}{}
+	}
+	return out, nil
+}
+
+func TestSettle_ClearTestDataDisabled(t *testing.T) {
+	uc := newSettleUC(newMemUsers(), &memPackages{}, &memSettleRuns{}, false, shanghaiNoon("2026-09-11"))
+	uc.SetTestData(&memTestData{})
+	_, err := uc.ClearTestData(context.Background())
+	if !errors.Is(err, ErrForceSettleDisabled) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestSettle_ClearTestDataKeepsUsers(t *testing.T) {
+	users := newMemUsers()
+	inv := uint64(1)
+	u1, err := users.Create(context.Background(), &User{Address: "0xkeep1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u2, err := users.Create(context.Background(), &User{
+		Address:          "0xkeep2",
+		InviterID:        &inv,
+		AvailableBalance: decimal.RequireFromString("100"),
+		LockBalance:      decimal.RequireFromString("50"),
+		PaidAmount:       decimal.RequireFromString("1000"),
+		CapEffective:     decimal.RequireFromString("600"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	orders := newMemOrders(users)
+	mustPay(t, orders, u1.ID, "1000", "2026-09-10")
+	led := &memLedger{}
+	if err := led.Create(context.Background(), &LedgerEntry{UserID: u1.ID, EntryType: "static", Amount: decimal.RequireFromString("1")}); err != nil {
+		t.Fatal(err)
+	}
+	runs := &memSettleRuns{}
+	uc := newSettleUCFull(users, &memPackages{rows: seedCapPackages()}, runs, orders, led, &memConfigs{min: "10"}, true, shanghaiNoon("2026-09-11"))
+	if _, err := uc.Run(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	daily, ok := uc.daily.(*memDailyCap)
+	if !ok {
+		t.Fatal("daily cap is not mem")
+	}
+	uc.SetTestData(&memTestData{users: users, orders: orders, led: led, runs: runs, daily: daily})
+	res, err := uc.ClearTestData(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.UsersKept != 2 {
+		t.Fatalf("users=%d", res.UsersKept)
+	}
+	if res.OrdersCleared < 1 {
+		t.Fatalf("orders=%d", res.OrdersCleared)
+	}
+	got1, err := users.FindByID(context.Background(), u1.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got2, err := users.FindByID(context.Background(), u2.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got1.Address != "0xkeep1" || got2.Address != "0xkeep2" {
+		t.Fatalf("addresses lost")
+	}
+	if got2.InviterID == nil || *got2.InviterID != 1 {
+		t.Fatalf("inviter=%v", got2.InviterID)
+	}
+	if !got2.AvailableBalance.IsZero() || !got2.LockBalance.IsZero() || !got2.PaidAmount.IsZero() || !got2.CapEffective.IsZero() {
+		t.Fatalf("balances not cleared: %+v", got2)
+	}
+	if len(orders.byID) != 0 {
+		t.Fatalf("orders left=%d", len(orders.byID))
+	}
+	if len(led.rows) != 0 {
+		t.Fatalf("ledger left=%d", len(led.rows))
+	}
+	latest, err := runs.FindLatest(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest != nil {
+		t.Fatalf("settle run left=%+v", latest)
+	}
+}
+
+func TestSettle_ForceCalendarNewFreezeExpiresLater(t *testing.T) {
+	ctx := context.Background()
+	users := newMemUsers()
+	u, err := users.Create(ctx, &User{
+		Address:      "0xcal",
+		PaidAmount:   decimal.RequireFromString("1000"),
+		CapEffective: decimal.RequireFromString("600"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	orders := newMemOrders(users)
+	mustPay(t, orders, u.ID, "1000", "2026-09-10")
+	led := &memLedger{}
+	runs := &memSettleRuns{}
+	uc := newSettleUCFull(users, &memPackages{rows: seedCapPackages()}, runs, orders, led, &memConfigs{min: "10"}, true, shanghaiNoon("2026-09-15"))
+	if err := uc.creditOverflow(ctx, u.ID, nil, LedgerDirect, LedgerDirectIspay, decimal.RequireFromString("100"), nil, "d15"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := uc.Run(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	if got := uc.currentBusinessDay(ctx).Format("2006-01-02"); got != "2026-09-16" {
+		t.Fatalf("business=%s", got)
+	}
+	if err := uc.creditOverflow(ctx, u.ID, nil, LedgerDirect, LedgerDirectIspay, decimal.RequireFromString("80"), nil, "d16"); err != nil {
+		t.Fatal(err)
+	}
+	holds, err := uc.daily.ListActiveHolds(ctx, u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(holds) != 2 {
+		t.Fatalf("holds=%d", len(holds))
+	}
+	byRemark := map[string]string{}
+	for _, h := range holds {
+		byRemark[h.Remark] = dailyCapDate(h.SettleDate).Format("2006-01-02")
+	}
+	if byRemark["d15"] != "2026-09-15" || byRemark["d16"] != "2026-09-16" {
+		t.Fatalf("%v", byRemark)
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := uc.Run(ctx, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	holds, err = uc.daily.ListActiveHolds(ctx, u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(holds) != 1 || holds[0].Remark != "d16" {
+		t.Fatalf("after 19 active=%+v", holds)
+	}
+	if _, err := uc.Run(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	holds, err = uc.daily.ListActiveHolds(ctx, u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(holds) != 0 {
+		t.Fatalf("after 20 still %+v", holds)
+	}
+}
+
 func TestSettle_CapUsesMaxOrderNotSum(t *testing.T) {
 	users := newMemUsers()
 	u, err := users.Create(context.Background(), &User{Address: "0xmax"})

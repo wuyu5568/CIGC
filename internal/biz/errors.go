@@ -30,7 +30,7 @@ var (
 	ErrWithdrawConflict     = errors.BadRequest("BIZ_WITHDRAW_CONFLICT", "withdraw not pending")
 	ErrWithdrawBelowMin     = errors.BadRequest("BIZ_WITHDRAW_BELOW_MIN", "below min withdraw amount")
 	ErrWithdrawFeeExceeds   = errors.BadRequest("BIZ_WITHDRAW_FEE_EXCEEDS", "手续费后到账必须大于0")
-	ErrWithdrawDailyCap     = errors.BadRequest("BIZ_WITHDRAW_DAILY_CAP", "超过每日提现上限")
+	ErrWithdrawDailyCap     = errors.BadRequest("BIZ_WITHDRAW_DAILY_CAP", "超过单笔提现上限")
 	ErrWithdrawClosed       = errors.BadRequest("BIZ_WITHDRAW_CLOSED", "提现已关闭")
 	ErrUserInactive         = errors.BadRequest("BIZ_USER_INACTIVE", "未激活用户不能提现，请先购买订单激活")
 	ErrIspayWithdrawClosed  = errors.BadRequest("BIZ_ISPAY_WITHDRAW_CLOSED", "暂不支持ISPAY提现")

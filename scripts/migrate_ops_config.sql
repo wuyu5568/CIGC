@@ -24,8 +24,8 @@ UPDATE business_configs SET name = 'USDT 单笔最低提现', sort_order = 40 WH
 UPDATE business_configs SET name = 'ISPAY 单笔最低提现', sort_order = 41 WHERE config_key = 'min_withdraw_amount_ispay';
 UPDATE business_configs SET name = 'USDT 提现手续费', sort_order = 42 WHERE config_key = 'withdraw_fee_rate';
 UPDATE business_configs SET name = 'ISPAY 提现手续费', sort_order = 43 WHERE config_key = 'withdraw_fee_rate_ispay';
-UPDATE business_configs SET name = 'USDT 每日提现上限', sort_order = 44 WHERE config_key = 'withdraw_daily_limit';
-UPDATE business_configs SET name = 'ISPAY 每日提现上限', sort_order = 45 WHERE config_key = 'withdraw_daily_limit_ispay';
+UPDATE business_configs SET name = 'USDT 单笔提现上限', sort_order = 44 WHERE config_key = 'withdraw_daily_limit';
+UPDATE business_configs SET name = 'ISPAY 单笔提现上限', sort_order = 45 WHERE config_key = 'withdraw_daily_limit_ispay';
 UPDATE business_configs SET name = 'ISPAY 测试现价', sort_order = 50 WHERE config_key = 'ispay_price';
 UPDATE business_configs SET name = '冻结清除时间', sort_order = 60 WHERE config_key = 'overflow_clear_hours';
 UPDATE business_configs SET name = '提现开关', sort_order = 70 WHERE config_key = 'withdraw_enabled';

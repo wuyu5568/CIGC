@@ -377,7 +377,7 @@ func TestCancelWithdraw_UnfreezesOwnPending(t *testing.T) {
 	}
 }
 
-func TestCreateWithdraw_DailyCap(t *testing.T) {
+func TestCreateWithdraw_PerTxCap(t *testing.T) {
 	users := newMemUsers()
 	u, err := users.Create(context.Background(), &User{
 		Address:          "0xabc",
@@ -387,46 +387,22 @@ func TestCreateWithdraw_DailyCap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	now := time.Date(2026, 9, 13, 10, 0, 0, 0, shanghaiLoc())
 	uc := NewWithdrawUseCase(users, users, &memLedger{}, newMemWithdraws(), &memConfigs{min: "10", feeRate: "0", dailyLimit: "20"}, NopTx{})
-	uc.now = func() time.Time { return now }
 	if _, err := uc.Create(context.Background(), u.ID, decimal.RequireFromString("10")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := uc.Create(context.Background(), u.ID, decimal.RequireFromString("10")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := uc.Create(context.Background(), u.ID, decimal.RequireFromString("10")); !errors.Is(err, ErrWithdrawDailyCap) {
-		t.Fatalf("third: %v", err)
-	}
-	rows, err := uc.withdraws.ListByUser(context.Background(), u.ID)
-	if err != nil {
+	if _, err := uc.Create(context.Background(), u.ID, decimal.RequireFromString("20")); err != nil {
 		t.Fatal(err)
 	}
-	var queueID uint64
-	for _, row := range rows {
-		if row.Status == WithdrawRewarded {
-			queueID = row.ID
-			break
-		}
-	}
-	if queueID == 0 {
-		t.Fatal("no payout queue row")
-	}
-	if _, err := uc.Cancel(context.Background(), u.ID, queueID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := uc.Create(context.Background(), u.ID, decimal.RequireFromString("10")); err != nil {
-		t.Fatal(err)
-	}
-
-	uc.now = func() time.Time { return now.Add(24 * time.Hour) }
-	if _, err := uc.Create(context.Background(), u.ID, decimal.RequireFromString("10")); err != nil {
-		t.Fatalf("next day: %v", err)
+	if _, err := uc.Create(context.Background(), u.ID, decimal.RequireFromString("21")); !errors.Is(err, ErrWithdrawDailyCap) {
+		t.Fatalf("over per-tx: %v", err)
 	}
 }
 
-func TestCreateWithdraw_IspayDailyCapSeparate(t *testing.T) {
+func TestCreateWithdraw_IspayPerTxCapSeparate(t *testing.T) {
 	users := newMemUsers()
 	u, err := users.Create(context.Background(), &User{
 		Address:          "0xabc",
@@ -437,26 +413,24 @@ func TestCreateWithdraw_IspayDailyCapSeparate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	now := time.Date(2026, 9, 13, 10, 0, 0, 0, shanghaiLoc())
 	uc := NewWithdrawUseCase(users, users, &memLedger{}, newMemWithdraws(), &memConfigs{
 		min: "10", feeRate: "0", dailyLimit: "1000", dailyLimitIspay: "2",
 	}, NopTx{})
-	uc.now = func() time.Time { return now }
 	if _, err := uc.Create(context.Background(), u.ID, decimal.RequireFromString("50")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := uc.CreateAsset(context.Background(), u.ID, decimal.RequireFromString("1"), WithdrawAssetIspay); err != nil {
+	if _, err := uc.CreateAsset(context.Background(), u.ID, decimal.RequireFromString("2"), WithdrawAssetIspay); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := uc.CreateAsset(context.Background(), u.ID, decimal.RequireFromString("1"), WithdrawAssetIspay); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := uc.CreateAsset(context.Background(), u.ID, decimal.RequireFromString("1"), WithdrawAssetIspay); !errors.Is(err, ErrWithdrawDailyCap) {
-		t.Fatalf("ispay third: %v", err)
+	if _, err := uc.CreateAsset(context.Background(), u.ID, decimal.RequireFromString("3"), WithdrawAssetIspay); !errors.Is(err, ErrWithdrawDailyCap) {
+		t.Fatalf("ispay over per-tx: %v", err)
 	}
 	lim := uc.UserLimits(context.Background(), u.ID)
-	if !lim.Today.Equal(decimal.RequireFromString("50")) || !lim.TodayTwo.Equal(decimal.RequireFromString("2")) {
-		t.Fatalf("today usdt=%s ispay=%s", lim.Today, lim.TodayTwo)
+	if !lim.DailyTwo.Equal(decimal.RequireFromString("2")) || !lim.RemainTwo.Equal(decimal.RequireFromString("2")) {
+		t.Fatalf("ispay cap=%s remain=%s", lim.DailyTwo, lim.RemainTwo)
 	}
 }
 

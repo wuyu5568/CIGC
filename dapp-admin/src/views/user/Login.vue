@@ -211,9 +211,10 @@ export default {
             })
         },
         loginSuccess() {
-            this.GetInfo().then(name => {
-                this.$router.push({ name })
-                // 延迟 1 秒显示欢迎信息
+            this.GetInfo().catch(() => {}).finally(() => {
+                this.$nextTick(() => {
+                    this.$router.replace({ path: '/home' }).catch(() => {})
+                })
                 setTimeout(() => {
                     this.$notification.success({
                         message: '欢迎',

@@ -2,9 +2,11 @@ package biz
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/cigc/app/internal/conf"
 	"github.com/shopspring/decimal"
 )
 
@@ -369,5 +371,55 @@ func TestPreviewUserLockUnlock_TodayReleased(t *testing.T) {
 	}
 	if p.TodayReleased || !p.UnlockTodayUSDT.Equal(decimal.RequireFromString("600")) {
 		t.Fatalf("other user unlock=%s released=%v", p.UnlockTodayUSDT, p.TodayReleased)
+	}
+}
+
+func TestListUserFreezeAssets(t *testing.T) {
+	users := newMemUsers()
+	u, err := users.Create(context.Background(), &User{Address: "0xfreeze"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := users.AddLockBalance(context.Background(), u.ID, decimal.RequireFromString("100")); err != nil {
+		t.Fatal(err)
+	}
+	if err := users.AddLockIspay(context.Background(), u.ID, decimal.RequireFromString("0.05")); err != nil {
+		t.Fatal(err)
+	}
+	orders := newMemOrders(users)
+	o, err := orders.Create(context.Background(), &Order{
+		UserID: u.ID, Amount: decimal.RequireFromString("1000"), Status: OrderPaid, OrderNo: "C384291",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	daily := newMemDailyCap()
+	exp := time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC)
+	if err := daily.CreateHold(context.Background(), &CapOverflowHold{
+		UserID: u.ID, Value: decimal.RequireFromString("40"), USDT: decimal.RequireFromString("40"),
+		Ispay: decimal.RequireFromString("0.02"), SourceType: LedgerDirect, OrderID: &o.ID,
+		ExpiresAt: &exp,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	uc := NewSettleUseCase(users, nil, nil, orders, users, &memLedger{}, nil, nil, nil, daily, NopTx{}, &conf.App{SettleTimezone: "Asia/Shanghai"})
+	items, err := uc.ListUserFreezeAssets(context.Background(), u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("n=%d %+v", len(items), items)
+	}
+	if items[0].Reason != "freeze_pending" || items[0].Amount != "60" || items[0].AmountTwo != "0.03" {
+		t.Fatalf("pending %+v", items[0])
+	}
+	if items[1].Reason != "freeze_hold" || items[1].Name != "直推冻结" || items[1].Amount != "40" || items[1].OrderNo != "C384291" {
+		t.Fatalf("hold %+v", items[1])
+	}
+	if items[1].OrderAmount != "1000" {
+		t.Fatalf("order amount=%s", items[1].OrderAmount)
+	}
+	if !strings.HasPrefix(items[1].SettleDate, "到期 ") {
+		t.Fatalf("expire=%s", items[1].SettleDate)
 	}
 }

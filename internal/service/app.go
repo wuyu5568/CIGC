@@ -824,11 +824,12 @@ func (s *AppService) CompatAdminSettleStatus(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	out := map[string]any{
-		"status":             "ok",
-		"settle_today":       st.TodayDate,
-		"settle_today_done":  st.TodaySettled,
-		"settle_next_test":   st.NextTestDate,
-		"allow_force_settle": st.AllowForce,
+		"status":               "ok",
+		"settle_today":         st.TodayDate,
+		"settle_today_done":    st.TodaySettled,
+		"settle_next_test":     st.NextTestDate,
+		"settle_business_date": st.BusinessDate,
+		"allow_force_settle":   st.AllowForce,
 	}
 	if st.Today != nil {
 		out["today"] = settleRunJSON(st.Today)
@@ -850,6 +851,22 @@ func (s *AppService) CompatAdminSettleReset(w http.ResponseWriter, r *http.Reque
 		"settle_today":     res.TodayDate,
 		"deleted":          res.Deleted,
 		"settle_next_test": res.NextTestDate,
+	})
+}
+
+func (s *AppService) CompatAdminTestDataClear(w http.ResponseWriter, r *http.Request) {
+	res, err := s.settle.ClearTestData(r.Context())
+	if err != nil {
+		writeBizError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":            "ok",
+		"users_kept":        res.UsersKept,
+		"orders_cleared":    res.OrdersCleared,
+		"ledger_cleared":    res.LedgerCleared,
+		"holds_cleared":     res.HoldsCleared,
+		"withdraws_cleared": res.WithdrawsCleared,
 	})
 }
 
@@ -925,40 +942,91 @@ func parsePageSize(r *http.Request) int {
 	return n
 }
 
+func userRewardJSON(it *biz.RewardItem) map[string]any {
+	created := ""
+	if it != nil && !it.CreatedAt.IsZero() {
+		created = it.CreatedAt.Format("2006-01-02 15:04:05")
+	}
+	if it == nil {
+		return map[string]any{}
+	}
+	return map[string]any{
+		"id":            it.ID,
+		"amount":        it.Amount,
+		"amountTwo":     it.AmountTwo,
+		"reward":        it.Amount,
+		"name":          it.Name,
+		"address":       it.Address,
+		"sourceAddress": it.SourceAddress,
+		"num":           it.Num,
+		"reason":        it.Reason,
+		"orderNo":       it.OrderNo,
+		"orderTitle":    it.OrderTitle,
+		"orderAmount":   it.OrderAmount,
+		"settleDate":    it.SettleDate,
+		"detail":        it.Detail,
+		"createdAt":     created,
+	}
+}
+
 func (s *AppService) CompatRewardList(w http.ResponseWriter, r *http.Request) {
 	uid, ok := auth.UserIDFromContext(r.Context())
 	if !ok {
 		writeBizError(w, biz.ErrUnauthorized)
 		return
 	}
-	page, err := s.ledger.ListUserRewards(r.Context(), uid, r.URL.Query().Get("reqType"), parsePage(r))
+	reqType := r.URL.Query().Get("reqType")
+	pageNo := parsePage(r)
+	if reqType == "6" {
+		if s.settle == nil {
+			writeJSON(w, http.StatusOK, map[string]any{"count": 0, "list": []any{}})
+			return
+		}
+		items, err := s.settle.ListUserFreezeAssets(r.Context(), uid)
+		if err != nil {
+			writeBizError(w, err)
+			return
+		}
+		total := len(items)
+		sliced := freezePage(items, pageNo, biz.DefaultRewardPageSize)
+		list := make([]map[string]any, 0, len(sliced))
+		for _, it := range sliced {
+			list = append(list, userRewardJSON(it))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"count": total, "list": list})
+		return
+	}
+	page, err := s.ledger.ListUserRewards(r.Context(), uid, reqType, pageNo)
 	if err != nil {
 		writeBizError(w, err)
 		return
 	}
 	list := make([]map[string]any, 0, len(page.Items))
 	for _, it := range page.Items {
-		list = append(list, map[string]any{
-			"id":          it.ID,
-			"amount":      it.Amount,
-			"amountTwo":   it.AmountTwo,
-			"reward":      it.Amount,
-			"name":        it.Name,
-			"address":     it.Address,
-			"num":         it.Num,
-			"reason":      it.Reason,
-			"orderNo":     it.OrderNo,
-			"orderTitle":  it.OrderTitle,
-			"orderAmount": it.OrderAmount,
-			"settleDate":  it.SettleDate,
-			"detail":      it.Detail,
-			"createdAt":   it.CreatedAt.Format("2006-01-02 15:04:05"),
-		})
+		list = append(list, userRewardJSON(it))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"count": page.Total,
 		"list":  list,
 	})
+}
+
+func freezePage(items []*biz.RewardItem, page, pageSize int) []*biz.RewardItem {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = biz.DefaultRewardPageSize
+	}
+	start := (page - 1) * pageSize
+	if start >= len(items) {
+		return []*biz.RewardItem{}
+	}
+	end := start + pageSize
+	if end > len(items) {
+		end = len(items)
+	}
+	return items[start:end]
 }
 
 func (s *AppService) CompatAdminRewardList(w http.ResponseWriter, r *http.Request) {
@@ -1704,7 +1772,7 @@ func withdrawUserMessage(err error) string {
 	case errors.Is(err, biz.ErrWithdrawFeeExceeds):
 		return "手续费后到账必须大于0"
 	case errors.Is(err, biz.ErrWithdrawDailyCap):
-		return "超过每日提现上限"
+		return "超过单笔提现上限"
 	case errors.Is(err, biz.ErrWithdrawClosed):
 		return "提现已关闭"
 	case errors.Is(err, biz.ErrWithdrawConflict):

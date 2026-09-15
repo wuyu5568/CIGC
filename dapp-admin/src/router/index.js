@@ -1,6 +1,7 @@
 import Vue from 'vue'
 import Router from 'vue-router'
-import { constantRouterMap, asyncRouterMap } from '@/config/router.config'
+import { constantRouterMap } from '@/config/router.config'
+import { asyncRouterMap } from '@/config/myRouter'
 
 Vue.use(Router)
 

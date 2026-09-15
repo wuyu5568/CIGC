@@ -10,7 +10,8 @@
         </a-card>
 
         <a-modal :title="editId ? '修改商品' : '新增商品'" :visible="isShowJf" @ok="handleSave" :confirmLoading="confirmLoading"
-            centered :closable="false" @cancel="isShowJf = false" :maskClosable="false" width="900px" destroyOnClose>
+            centered :closable="false" @cancel="isShowJf = false" :maskClosable="false" width="960px" destroyOnClose
+            :bodyStyle="{ maxHeight: '72vh', overflow: 'auto' }">
             <a-form style="margin-top: 20px">
                 <a-form-item label="名称" :label-col="labelCol" :wrapper-col="wrapperCol">
                     <a-input v-model="name" placeholder="请输入商品名称" />
@@ -20,7 +21,10 @@
                 </a-form-item>
                 <a-form-item label="主图" :label-col="labelCol" :wrapper-col="wrapperCol">
                     <div>
-                        <img v-if="imageUrl" :src="imageUrl" class="goods-preview" @click="showImage(imageUrl)" />
+                        <div v-if="imageUrl" class="goods-cover">
+                            <img :src="imageUrl" class="goods-preview" @click="showImage(imageUrl)" />
+                            <a-button type="danger" ghost size="small" @click="clearImage">删除主图</a-button>
+                        </div>
                         <a-upload
                             name="file"
                             :multiple="false"
@@ -35,7 +39,16 @@
                     </div>
                 </a-form-item>
                 <a-form-item label="详情" :label-col="labelCol" :wrapper-col="wrapperCol">
-                    <tinymceForm v-model="detail" :height="280" :uploadHandler="uploadDetailImage" />
+                    <a-checkbox :checked="detailEnabled" @change="onDetailEnabled">填写详情</a-checkbox>
+                    <div v-if="detailEnabled" class="detail-editor">
+                        <tinymceForm
+                            editor-id="web3-goods-detail"
+                            :height="360"
+                            :value="detail"
+                            :upload-handler="onDetailImageUpload"
+                            @input="onDetailInput"
+                        />
+                    </div>
                 </a-form-item>
                 <a-form-item label="单价" :label-col="labelCol" :wrapper-col="wrapperCol">
                     <a-input-number v-model="amount" :min="1" placeholder="请输入单价" style="width: 100%" />
@@ -67,6 +80,21 @@ const trimAmount = (v) => {
 
 const isOnSale = (row) => row && (row.on_sale === 1 || row.on_sale === '1')
 
+const hasDetailHtml = (s) => htmlToPlain(s).length > 0
+
+const htmlToPlain = (s) => {
+    return String(s || '')
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<\/p>/gi, '\n')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&nbsp;/gi, ' ')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&amp;/g, '&')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim()
+}
+
 const capForAmount = (amount) => {
     const a = Number(amount)
     if (!Number.isFinite(a) || a <= 0) return '0'
@@ -92,10 +120,12 @@ export default {
             name: '',
             desc: '',
             detail: '',
+            detailEnabled: false,
             amount: undefined,
             enabled: true,
             imageFile: null,
             imageUrl: '',
+            imageCleared: false,
             previewVisible: false,
             previewUrl: '',
             labelCol: {
@@ -185,10 +215,12 @@ export default {
             this.name = ''
             this.desc = ''
             this.detail = ''
+            this.detailEnabled = false
             this.amount = undefined
             this.enabled = true
             this.imageFile = null
             this.imageUrl = ''
+            this.imageCleared = false
         },
         openCreate() {
             this.resetForm()
@@ -199,20 +231,56 @@ export default {
             this.name = row.name || ''
             this.desc = row.desc || ''
             this.detail = ''
+            this.detailEnabled = !!(row.has_detail === true || row.has_detail === 1 || row.has_detail === '1')
             this.amount = Number(row.amount)
             this.enabled = isOnSale(row)
             this.imageFile = null
             this.imageUrl = row.image || ''
+            this.imageCleared = false
             this.isShowJf = true
             Gai.web3_goods_detail({ id: row.id }).then((res) => {
                 if (res.status && res.status !== 'ok') return
                 const item = res.item || {}
-                this.name = item.name || this.name
-                this.desc = item.desc || this.desc
-                this.detail = item.detail || ''
+                if (item.name != null) this.name = item.name
+                if (item.desc != null) this.desc = item.desc
+                this.detail = item.detail != null ? String(item.detail) : ''
+                this.detailEnabled = hasDetailHtml(this.detail) || item.has_detail === true || item.has_detail === 1 || item.has_detail === '1'
                 if (item.amount != null) this.amount = Number(item.amount)
                 this.enabled = isOnSale(item)
-                if (item.image) this.imageUrl = item.image
+                if (item.image != null) this.imageUrl = item.image || ''
+            })
+        },
+        clearImage() {
+            this.imageFile = null
+            this.imageUrl = ''
+            this.imageCleared = true
+        },
+        onDetailEnabled(e) {
+            this.detailEnabled = !!(e && e.target && e.target.checked)
+        },
+        onDetailInput(v) {
+            this.detail = v == null ? '' : String(v)
+        },
+        onDetailImageUpload(blobInfo, success, failure) {
+            const blob = blobInfo && blobInfo.blob ? blobInfo.blob() : null
+            if (!blob) {
+                failure('请上传图片')
+                return
+            }
+            if (blob.size > 5 * 1024 * 1024) {
+                failure('图片不能超过5MB')
+                return
+            }
+            const formData = new FormData()
+            formData.append('file', blob, (blobInfo && blobInfo.filename && blobInfo.filename()) || 'image.png')
+            Gai.web3_goods_image_upload(formData).then((res) => {
+                if (res && res.url) {
+                    success(res.url)
+                    return
+                }
+                failure((res && res.status) || '图片上传失败')
+            }).catch(() => {
+                failure('图片上传失败')
             })
         },
         customRequest(info) {
@@ -230,6 +298,7 @@ export default {
             }
             this.imageFile = file
             this.imageUrl = URL.createObjectURL(file)
+            this.imageCleared = false
             if (info.onSuccess) info.onSuccess()
         },
         uploadImage() {
@@ -246,39 +315,20 @@ export default {
                 return res.url
             })
         },
-        uploadDetailImage(blobInfo, success, failure) {
-            const formData = new FormData()
-            const name = typeof blobInfo.filename === 'function' ? blobInfo.filename() : 'image.png'
-            formData.append('file', blobInfo.blob(), name)
-            Gai.web3_goods_image_upload(formData).then((res) => {
-                if (res.status && res.status !== 'ok') {
-                    failure(res.status)
-                    return
-                }
-                if (!res.url) {
-                    failure('图片上传失败')
-                    return
-                }
-                success(res.url)
-            }).catch(() => {
-                failure('图片上传失败')
-            })
-        },
         payload(image) {
             const data = {
                 name: this.name,
                 desc: this.desc,
-                detail: this.detail || '',
+                detail: this.detailEnabled ? this.detail : '',
                 amount: this.amount,
                 on_sale: this.enabled ? 1 : 0,
             }
             if (this.editId) data.id = this.editId
-            if (image) data.image = image
+            if (this.imageCleared) data.image = ''
+            else if (image) data.image = image
             return data
         },
         handleSave() {
-            if (!this.name) return this.$message.info('请输入商品名称')
-            if (!this.desc) return this.$message.info('请输入商品描述')
             if (!this.amount) return this.$message.info('请输入单价')
             this.confirmLoading = true
             this.uploadImage().then((image) => {
@@ -363,16 +413,24 @@ export default {
     justify-content: flex-end;
     margin-bottom: 16px;
 }
+.detail-editor {
+    margin-top: 8px;
+}
 .cap-hint {
     margin-top: 6px;
     color: rgba(0, 0, 0, 0.45);
     font-size: 12px;
     line-height: 1.4;
 }
+.goods-cover {
+    display: flex;
+    align-items: flex-end;
+    gap: 12px;
+    margin-bottom: 8px;
+}
 .goods-preview {
     display: block;
     height: 64px;
-    margin-bottom: 8px;
     object-fit: contain;
     cursor: pointer;
 }
@@ -381,5 +439,13 @@ export default {
     width: 100%;
     max-height: 70vh;
     object-fit: contain;
+}
+</style>
+
+<style lang="less">
+.tox-tinymce-aux,
+.tox-menu,
+.tox-dialog-wrap {
+    z-index: 4000 !important;
 }
 </style>

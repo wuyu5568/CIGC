@@ -88,7 +88,7 @@ func isDuplicateKey(err error) bool {
 		return true
 	}
 	msg := err.Error()
-	return strings.Contains(msg, "Duplicate entry") || strings.Contains(msg, "1062")
+	return strings.Contains(msg, "Duplicate") || strings.Contains(msg, "UNIQUE") || strings.Contains(msg, "1062")
 }
 
 func isForeignKey(err error) bool {

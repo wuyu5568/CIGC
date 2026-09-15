@@ -173,7 +173,7 @@ func (uc *SettleUseCase) PreviewUserLockUnlock(ctx context.Context, user *User) 
 	}
 	released := false
 	if uc != nil && uc.ledger != nil && uc.now != nil && user.IsActivated() {
-		settleDay, _ := uc.settleDay(uc.now())
+		settleDay := uc.currentBusinessDay(ctx)
 		ok, err := uc.ledger.ExistsByUserTypeDateRemark(ctx, user.ID, LedgerActivate, settleDay, remarkDailyLockUSDT)
 		if err != nil {
 			return LockUnlockPreview{}, err
@@ -203,4 +203,86 @@ func (uc *SettleUseCase) PreviewUserLockUnlock(ctx context.Context, user *User) 
 		}
 	}
 	return p, nil
+}
+
+func overflowHoldName(source string) string {
+	switch source {
+	case LedgerDirect:
+		return "直推冻结"
+	case LedgerMatch:
+		return "对碰冻结"
+	case LedgerManage:
+		return "管理冻结"
+	case LedgerStatic:
+		return "静态冻结"
+	case overflowSourceInactive:
+		return "未激活冻结"
+	case overflowSourceAdmin:
+		return "调账冻结"
+	default:
+		return "冻结"
+	}
+}
+
+// ListUserFreezeAssets 用户端冻结资产：待日结解冻汇总 + 批次剩余。
+func (uc *SettleUseCase) ListUserFreezeAssets(ctx context.Context, userID uint64) ([]*RewardItem, error) {
+	if uc == nil || userID == 0 {
+		return []*RewardItem{}, nil
+	}
+	user, err := uc.users.FindByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	holds, err := uc.daily.ListActiveHolds(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	holdUSDT := decimal.Zero
+	holdIspay := decimal.Zero
+	holdItems := make([]*RewardItem, 0, len(holds))
+	loc := uc.location()
+	for _, h := range holds {
+		if h == nil {
+			continue
+		}
+		holdUSDT = holdUSDT.Add(h.USDT)
+		holdIspay = holdIspay.Add(h.Ispay)
+		item := &RewardItem{
+			ID:        h.ID,
+			Name:      overflowHoldName(h.SourceType),
+			Reason:    "freeze_hold",
+			Amount:    amountStr(h.USDT),
+			AmountTwo: amountStr(h.Ispay),
+			OrderID:   orderIDStr(h.OrderID),
+		}
+		if h.ExpiresAt != nil {
+			item.SettleDate = "到期 " + h.ExpiresAt.In(loc).Format("2006-01-02 15:04")
+		} else {
+			item.SettleDate = "待封账"
+		}
+		holdItems = append(holdItems, item)
+	}
+	pendingUSDT := money.Round(user.LockBalance.Sub(holdUSDT))
+	pendingIspay := money.Round(user.LockIspay.Sub(holdIspay))
+	if pendingUSDT.IsNegative() {
+		pendingUSDT = decimal.Zero
+	}
+	if pendingIspay.IsNegative() {
+		pendingIspay = decimal.Zero
+	}
+	out := make([]*RewardItem, 0, 1+len(holdItems))
+	if pendingUSDT.IsPositive() || pendingIspay.IsPositive() {
+		out = append(out, &RewardItem{
+			Name:      "待日结解冻",
+			Detail:    "非批次冻结，按封顶排队",
+			Reason:    "freeze_pending",
+			Amount:    amountStr(pendingUSDT),
+			AmountTwo: amountStr(pendingIspay),
+		})
+	}
+	out = append(out, holdItems...)
+	if err := NewLedgerUseCase(uc.ledger, uc.orders, uc.users).attachOrderSources(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }

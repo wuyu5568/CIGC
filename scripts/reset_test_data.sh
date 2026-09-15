@@ -8,6 +8,10 @@ if [[ ! -f .env ]]; then
   echo "missing $ROOT/.env" >&2
   exit 1
 fi
+if [[ ! -f scripts/reset_test_data.sql ]]; then
+  echo "missing $ROOT/scripts/reset_test_data.sql" >&2
+  exit 1
+fi
 
 GEN="$(grep -E '^CIGC_GENESIS_ADDRESS=' .env | head -1 | cut -d= -f2- | tr -d '\"' | tr 'A-F' 'a-f' | tr -d '[:space:]')"
 if [[ ! "$GEN" =~ ^0x[0-9a-f]{40}$ ]]; then

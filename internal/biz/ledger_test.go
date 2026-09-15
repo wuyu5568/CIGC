@@ -213,6 +213,8 @@ func TestReqTypeToEntryType(t *testing.T) {
 		{"4", LedgerMatch, true},
 		{"5", LedgerManage, true},
 		{"2", LedgerStatic, true},
+		{"7", LedgerActivate, true},
+		{"6", "", false},
 		{"99", "", false},
 	}
 	for _, tc := range cases {
@@ -277,11 +279,72 @@ func TestListUserRewards_ReqTypeSingle(t *testing.T) {
 	}
 }
 
+func TestListUserRewards_PairsRealIspay(t *testing.T) {
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	day := time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC)
+	oid := uint64(8)
+	uc := NewLedgerUseCase(&memLedger{rows: []*LedgerEntry{
+		{ID: 1, UserID: 1, OrderID: &oid, EntryType: LedgerStatic, Amount: decimal.RequireFromString("1.2"), BalanceKind: BalanceAvailable, SettleDate: &day, Remark: "days=300 day=1", CreatedAt: now},
+		{ID: 2, UserID: 1, OrderID: &oid, EntryType: LedgerStaticIspay, Amount: decimal.RequireFromString("0.0006"), BalanceKind: BalanceIspay, SettleDate: &day, Remark: "days=300 day=1", CreatedAt: now},
+	}}, nil, nil)
+	uc.now = func() time.Time { return now }
+	page, err := uc.ListUserRewards(context.Background(), 1, "2", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 1 || page.Items[0].Amount != "1.2" || page.Items[0].AmountTwo != "0.0006" {
+		t.Fatalf("%+v", page.Items)
+	}
+	if page.Items[0].Detail != "第1天" {
+		t.Fatalf("detail=%s", page.Items[0].Detail)
+	}
+}
+
+func TestListUserRewards_FreezeRelease(t *testing.T) {
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	day := time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC)
+	oid := uint64(9)
+	repo := &memLedger{rows: []*LedgerEntry{
+		{ID: 1, UserID: 1, OrderID: &oid, EntryType: LedgerActivate, Amount: decimal.RequireFromString("-10"), BalanceKind: BalanceLock, SettleDate: &day, Remark: remarkDailyLockUSDT, CreatedAt: now},
+		{ID: 2, UserID: 1, OrderID: &oid, EntryType: LedgerActivate, Amount: decimal.RequireFromString("10"), BalanceKind: BalanceAvailable, SettleDate: &day, Remark: remarkDailyLockUSDT, CreatedAt: now},
+		{ID: 3, UserID: 1, OrderID: &oid, EntryType: LedgerActivateIspay, Amount: decimal.RequireFromString("-0.005"), BalanceKind: BalanceLockIspay, SettleDate: &day, Remark: remarkDailyLockIspay, CreatedAt: now},
+		{ID: 4, UserID: 1, OrderID: &oid, EntryType: LedgerActivateIspay, Amount: decimal.RequireFromString("0.005"), BalanceKind: BalanceIspay, SettleDate: &day, Remark: remarkDailyLockIspay, CreatedAt: now},
+		{ID: 5, UserID: 1, EntryType: LedgerActivate, Amount: decimal.RequireFromString("-3"), BalanceKind: BalanceLock, SettleDate: &day, Remark: remarkOverflowClear72h, CreatedAt: now},
+		{ID: 6, UserID: 1, EntryType: LedgerActivateIspay, Amount: decimal.RequireFromString("-0.001"), BalanceKind: BalanceLockIspay, SettleDate: &day, Remark: remarkOverflowClear72h, CreatedAt: now},
+		{ID: 7, UserID: 1, EntryType: LedgerDirect, Amount: decimal.RequireFromString("99"), CreatedAt: now},
+	}}
+	uc := NewLedgerUseCase(repo, nil, nil)
+	uc.now = func() time.Time { return now }
+
+	page, err := uc.ListUserRewards(context.Background(), 1, "7", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 2 {
+		t.Fatalf("total=%d want 2 %+v", page.Total, page.Items)
+	}
+	var unlock, clear *RewardItem
+	for _, it := range page.Items {
+		switch it.Reason {
+		case "unfreeze":
+			unlock = it
+		case "unfreeze_clear":
+			clear = it
+		}
+	}
+	if unlock == nil || unlock.Amount != "10" || unlock.AmountTwo != "0.005" || unlock.Name != "日结解冻" {
+		t.Fatalf("unlock=%+v", unlock)
+	}
+	if clear == nil || clear.Amount != "3" || clear.AmountTwo != "0.001" || clear.Name != "冻结清除" {
+		t.Fatalf("clear=%+v", clear)
+	}
+}
+
 func TestListUserRewards_UnknownReqTypeEmpty(t *testing.T) {
 	uc := NewLedgerUseCase(&memLedger{rows: []*LedgerEntry{
 		{ID: 1, UserID: 1, EntryType: LedgerDirect, Amount: decimal.RequireFromString("1"), CreatedAt: time.Now()},
 	}}, nil, nil)
-	page, err := uc.ListUserRewards(context.Background(), 1, "2", 1)
+	page, err := uc.ListUserRewards(context.Background(), 1, "6", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,11 +460,11 @@ func TestListAdminRewards_RewardPairAndCategory(t *testing.T) {
 	if static.Category != "静态收益" || static.Reason != "static" || static.Amount != "1.2" || static.AmountTwo != "0.0006" {
 		t.Fatalf("static %+v", static)
 	}
-	if static.Detail != "订单#8 · 300天档 · 第1天" || static.Address != "0xabc" || static.BalanceName != "可提U" {
+	if static.Detail != "第1天" || static.Address != "0xabc" || static.BalanceName != "可提U" {
 		t.Fatalf("static detail %+v", static)
 	}
 	direct := page.Items[1]
-	if direct.Category != "动态收益" || direct.AmountTwo != "0" || !strings.Contains(direct.Detail, "费率 0.1") {
+	if direct.Category != "动态收益" || direct.AmountTwo != "0" || !strings.Contains(direct.Detail, "费率 10%") {
 		t.Fatalf("direct %+v", direct)
 	}
 	onlyStatic, err := uc.ListAdminRewards(context.Background(), "", "static", 1)

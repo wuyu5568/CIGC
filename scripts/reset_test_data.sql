@@ -1,5 +1,6 @@
 -- 清测试业务数据，只留创世用户。商品档位与业务配置不动。
 -- 由 scripts/reset_test_data.sh 注入 @genesis_address 后执行。
+-- 链上扫块游标不动，避免旧入账事件被重新匹配。
 
 SET NAMES utf8mb4;
 SET @genesis_id := (

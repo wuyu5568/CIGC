@@ -339,9 +339,9 @@ func readWeb3GoodsReq(r *http.Request) (*web3GoodsReq, error) {
 			in.HasOnSale = true
 			in.OnSale = parseOnSaleFlag(on)
 		}
-		if img := strings.Trim(string(body.Image), `"`); img != "" && img != "null" {
+		if s, ok := parseJSONString(body.Image); ok {
 			in.HasImage = true
-			in.Image = upload.NormalizeStored(img)
+			in.Image = upload.NormalizeStored(s)
 		}
 		if s, ok := parseJSONString(body.Detail); ok {
 			in.HasDetail = true
@@ -399,9 +399,9 @@ func readWeb3GoodsReq(r *http.Request) (*web3GoodsReq, error) {
 		in.HasOnSale = true
 		in.OnSale = parseOnSaleFlag(r.Form.Get("on_sale"))
 	}
-	if img := strings.TrimSpace(r.Form.Get("image")); img != "" {
+	if _, ok := r.Form["image"]; ok {
 		in.HasImage = true
-		in.Image = upload.NormalizeStored(img)
+		in.Image = upload.NormalizeStored(r.Form.Get("image"))
 	}
 	if _, ok := r.Form["detail"]; ok {
 		in.HasDetail = true

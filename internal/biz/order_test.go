@@ -505,6 +505,22 @@ func TestCreateSaveDeletePackage(t *testing.T) {
 	}
 }
 
+func TestRandomOrderNo(t *testing.T) {
+	a := RandomOrderNo()
+	b := RandomOrderNo()
+	if len(a) != 7 || a[0] != 'C' {
+		t.Fatalf("a=%s", a)
+	}
+	for i := 1; i < 7; i++ {
+		if a[i] < '0' || a[i] > '9' {
+			t.Fatalf("a=%s", a)
+		}
+	}
+	if a == b {
+		t.Log("same twice is possible")
+	}
+}
+
 func TestFormatOrderNoAndSource(t *testing.T) {
 	if got := FormatOrderNo(16); got != "C000016" {
 		t.Fatalf("no=%s", got)

@@ -1,9 +1,8 @@
 import Vue from 'vue'
-import { login, getInfo, logout } from '@/api/login'
+import { logout } from '@/api/login'
 import { ACCESS_TOKEN, ACCESS_NAME, ACCESS_AVATAR } from '@/store/mutation-types'
 import { welcome } from '@/utils/util'
 import { asyncRouterMap } from '@/config/myRouter'
-import router from '@/router'
 import Gai from "@/api/Gai";
 const user = {
     state: {
@@ -13,7 +12,8 @@ const user = {
         avatar: '',
         roles: [],
         info: {},
-        routerList: [],
+        routerList: asyncRouterMap,
+        authFetched: false,
     },
 
     mutations: {
@@ -55,17 +55,33 @@ const user = {
         // 获取用户信息
         GetInfo({ commit, state }) {
             return new Promise((resolve, reject) => {
+                if (state.authFetched && state.routerList && state.routerList.length) {
+                    resolve('home')
+                    return
+                }
+                if (!state.routerList || !state.routerList.length) {
+                    state.routerList = asyncRouterMap
+                }
                 Gai.my_auth_list().then(res => {
-                    const baseList = asyncRouterMap;
-                    const auth = res.auth.map(v => v.path);
+                    const auth = (res.auth || []).map(v => v.path)
+                    let list = asyncRouterMap
                     if (res.super !== `1`) {
-                        /* 普通管理 */
-                        baseList[0].children = baseList[0].children.filter(v => auth.includes(v.path));
+                        list = asyncRouterMap.map((item, idx) => {
+                            if (idx !== 0 || !item.children) return item
+                            return { ...item, children: item.children.filter(v => auth.includes(v.path)) }
+                        })
                     }
-                    state.routerList = baseList;
-                    router.addRoutes(state.routerList);
-                    resolve(state.routerList[0].children[0].name);
+                    state.routerList = list
+                    state.authFetched = true
+                    const home = (list[0] && list[0].children && list[0].children[0] && list[0].children[0].name) || 'home'
+                    resolve(home)
                 }).catch(error => {
+                    const status = error && error.response && error.response.status
+                    if (status === 401) {
+                        commit('SET_TOKEN', '')
+                        Vue.ls.remove(ACCESS_TOKEN)
+                        state.authFetched = false
+                    }
                     reject(error)
                 })
             })
@@ -76,6 +92,7 @@ const user = {
             return new Promise((resolve) => {
                 commit('SET_TOKEN', '')
                 commit('SET_ROLES', [])
+                state.authFetched = false
                 Vue.ls.remove(ACCESS_TOKEN)
 
                 logout(state.token).then(() => {

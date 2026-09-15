@@ -4,29 +4,34 @@ import store from './store'
 
 import NProgress from 'nprogress' // progress bar
 import 'nprogress/nprogress.css' // progress bar style
-import notification from 'ant-design-vue/es/notification'
 import { setDocumentTitle, domTitle } from '@/utils/domUtil'
 import { ACCESS_TOKEN } from '@/store/mutation-types'
 
-NProgress.configure({ showSpinner: false }) // NProgress Configuration
-if(Vue.ls.get(ACCESS_TOKEN))store.dispatch('GetInfo');
+NProgress.configure({ showSpinner: false })
 store.dispatch('setInfo')
+
 router.beforeEach((to, from, next) => {
-    NProgress.start() // start progress bar
+    NProgress.start()
     to.meta && (typeof to.meta.title !== 'undefined' && setDocumentTitle(`${to.meta.title} - ${domTitle}`))
-    const hasToken = Vue.ls.get(ACCESS_TOKEN)
+    const hasToken = !!Vue.ls.get(ACCESS_TOKEN)
     if (hasToken && to.name === 'login') {
-        next({ name: 'index' })
-    } else if (!hasToken && to.name !== 'login') {
-        next({ name: 'login' })
-    } else {
-        next()
+        next({ path: '/home' })
+        return
     }
+    if (!hasToken && to.name !== 'login') {
+        next({ name: 'login' })
+        return
+    }
+    if (hasToken) {
+        store.dispatch('GetInfo').catch(() => {})
+    }
+    next()
 })
 
 router.afterEach(() => {
-  NProgress.done() // finish progress bar
+    NProgress.done()
 })
+
 /**
  * Action 权限指令
  * 指令用法：
@@ -60,4 +65,3 @@ const action = Vue.directive('action', {
 export {
     action
 }
-
