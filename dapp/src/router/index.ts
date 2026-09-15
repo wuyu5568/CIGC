@@ -15,6 +15,7 @@ import Shop from '@/views/subpage/shop.vue'
 import Order from '@/views/subpage/order.vue'
 import PowerShop from '@/views/subpage/powerShop.vue'
 import Web3Shop from '@/views/subpage/web3Shop.vue'
+import Web3GoodsDetail from '@/views/subpage/web3GoodsDetail.vue'
 import Stat from '@/views/subpage/stat.vue'
 import Wallet from "@/views/subpage/wallet.vue";
 import Community from '@/views/subpage/community.vue'
@@ -42,6 +43,7 @@ const routes = [
     { path: '/address', component: Address},
     { path: '/shop', component: Shop},
     { path: '/Web3Shop', component: Web3Shop},
+    { path: '/Web3Shop/:id', component: Web3GoodsDetail},
     { path: '/order', component: Order},
     { path: '/order/:id', component: Order},
     { path: '/powerShop', component: PowerShop},

@@ -42,6 +42,8 @@ for f in \
   migrate_package_titles.sql \
   migrate_package_image.sql \
   migrate_package_amount_days.sql \
+  migrate_package_detail.sql \
+  migrate_package_drop_amount_days.sql \
   migrate_daily_cap_overflow.sql \
   migrate_ops_config.sql
 do

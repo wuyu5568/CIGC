@@ -16,15 +16,8 @@ const (
 )
 
 // orderActivateCap 购买单对应的封顶，用于激活时解冻额度。
-func orderActivateCap(ctx context.Context, packages PackageRepo, amount decimal.Decimal) decimal.Decimal {
-	if packages == nil {
-		return decimal.Zero
-	}
-	pkgs, err := packages.ListAll(ctx)
-	if err != nil {
-		return decimal.Zero
-	}
-	return MatchCap(amount, pkgs)
+func orderActivateCap(_ context.Context, _ PackageRepo, amount decimal.Decimal) decimal.Decimal {
+	return CapForAmount(amount)
 }
 
 func activateMoveUSDT(lock, cap decimal.Decimal) decimal.Decimal {

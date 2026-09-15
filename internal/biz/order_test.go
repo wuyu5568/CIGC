@@ -69,11 +69,6 @@ func (m *memPackages) Update(_ context.Context, p *Package) (*Package, error) {
 }
 
 func (m *memPackages) Create(_ context.Context, p *Package) (*Package, error) {
-	for _, row := range m.rows {
-		if row.Amount.Equal(p.Amount) && PackageReleaseDays(row) == PackageReleaseDays(p) {
-			return nil, ErrPackageAmountTaken
-		}
-	}
 	cp := *p
 	var maxID uint64
 	for _, row := range m.rows {
@@ -389,6 +384,37 @@ func TestBuyWithRecharge_PaysAndDeducts(t *testing.T) {
 	}
 	if _, err := uc.BuyWithRecharge(context.Background(), u.ID, decimal.RequireFromString("1000"), 300); err != ErrInsufficientBalance {
 		t.Fatalf("second buy: %v", err)
+	}
+}
+
+func TestBuyWithRechargeGoods_UsesPackageAmount(t *testing.T) {
+	users := newMemUsers()
+	u, err := users.Create(context.Background(), &User{
+		Address: "0xabc", RechargeBalance: decimal.RequireFromString("2000"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkgs := &memPackages{rows: []*Package{{
+		ID: 9, Amount: decimal.RequireFromString("1500"), Title: "牙刷", GoodsDesc: "d", Enabled: true,
+	}}}
+	uc := NewOrderUseCase(pkgs, newMemOrders(users), users, users, &memLedger{})
+	o, err := uc.BuyWithRechargeGoods(context.Background(), u.ID, 9, 750)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.PackageID != 9 || !o.Amount.Equal(decimal.RequireFromString("1500")) || o.ReleaseDays != 750 {
+		t.Fatalf("%+v", o)
+	}
+	got, err := users.FindByID(context.Background(), u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.RechargeBalance.Equal(decimal.RequireFromString("500")) {
+		t.Fatalf("recharge=%s", got.RechargeBalance)
+	}
+	if !got.CapEffective.Equal(decimal.RequireFromString("600")) {
+		t.Fatalf("cap=%s", got.CapEffective)
 	}
 }
 

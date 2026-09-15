@@ -20,36 +20,50 @@ func seedCapPackages() []*Package {
 }
 
 func TestMatchCap(t *testing.T) {
-	pkgs := seedCapPackages()
 	cases := []struct {
 		paid string
 		want string
 	}{
 		{"0", "0"},
-		{"999", "0"},
-		{"1000", "600"},
+		{"1", "600"},
+		{"999", "600"},
+		{"2999.99999999", "600"},
 		{"3000", "1800"},
 		{"3999.99999999", "1800"},
-		{"4000", "1800"},
+		{"5999.99999999", "1800"},
 		{"6000", "4000"},
+		{"11999.99999999", "4000"},
+		{"12000", "16000"},
+		{"23999.99999999", "16000"},
+		{"24000", "24000"},
+		{"35999.99999999", "24000"},
+		{"36000", "30000"},
+		{"49999.99999999", "30000"},
+		{"50000", "42000"},
+		{"69999.99999999", "42000"},
+		{"70000", "60000"},
+		{"99999.99999999", "60000"},
+		{"100000", "100000"},
 		{"160000", "100000"},
 		{"200000", "100000"},
 	}
 	for _, tc := range cases {
-		got := MatchCap(decimal.RequireFromString(tc.paid), pkgs)
+		got := CapForAmount(decimal.RequireFromString(tc.paid))
 		want := decimal.RequireFromString(tc.want)
 		if !got.Equal(want) {
 			t.Fatalf("paid=%s got=%s want=%s", tc.paid, got, want)
+		}
+		if !MatchCap(decimal.RequireFromString(tc.paid), nil).Equal(want) {
+			t.Fatalf("MatchCap paid=%s", tc.paid)
 		}
 	}
 }
 
 func TestMatchCap_DisabledPackageStillCounts(t *testing.T) {
-	pkgs := []*Package{{
+	got := MatchCap(decimal.RequireFromString("1000"), []*Package{{
 		ID: 1, Amount: decimal.RequireFromString("1000"),
-		DailyCap: decimal.RequireFromString("600"), Enabled: false,
-	}}
-	got := MatchCap(decimal.RequireFromString("1000"), pkgs)
+		DailyCap: decimal.RequireFromString("1"), Enabled: false,
+	}})
 	if !got.Equal(decimal.RequireFromString("600")) {
 		t.Fatalf("got %s", got)
 	}

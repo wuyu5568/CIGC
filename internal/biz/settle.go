@@ -12,27 +12,37 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// MatchCap 按单笔订单金额向下匹配套餐档位，返回该档 daily_cap。
-// 封顶取用户最大已付单，不按 paid_amount 累加。已下架套餐仍参与匹配。
-func MatchCap(paid decimal.Decimal, pkgs []*Package) decimal.Decimal {
+// CapForAmount 按结算金额套日封顶。无金额为 0；有金额且小于 3000 为 600。
+func CapForAmount(paid decimal.Decimal) decimal.Decimal {
 	paid = money.Round(paid)
-	var best *Package
-	for _, p := range pkgs {
-		if p == nil {
-			continue
-		}
-		amt := money.Round(p.Amount)
-		if amt.GreaterThan(paid) {
-			continue
-		}
-		if best == nil || amt.GreaterThan(money.Round(best.Amount)) {
-			best = p
-		}
-	}
-	if best == nil {
+	if !paid.IsPositive() {
 		return decimal.Zero
 	}
-	return money.Round(best.DailyCap)
+	switch {
+	case paid.LessThan(decimal.RequireFromString("3000")):
+		return decimal.RequireFromString("600")
+	case paid.LessThan(decimal.RequireFromString("6000")):
+		return decimal.RequireFromString("1800")
+	case paid.LessThan(decimal.RequireFromString("12000")):
+		return decimal.RequireFromString("4000")
+	case paid.LessThan(decimal.RequireFromString("24000")):
+		return decimal.RequireFromString("16000")
+	case paid.LessThan(decimal.RequireFromString("36000")):
+		return decimal.RequireFromString("24000")
+	case paid.LessThan(decimal.RequireFromString("50000")):
+		return decimal.RequireFromString("30000")
+	case paid.LessThan(decimal.RequireFromString("70000")):
+		return decimal.RequireFromString("42000")
+	case paid.LessThan(decimal.RequireFromString("100000")):
+		return decimal.RequireFromString("60000")
+	default:
+		return decimal.RequireFromString("100000")
+	}
+}
+
+// MatchCap 保留旧签名；封顶只看结算金额，不再读取套餐 daily_cap。
+func MatchCap(paid decimal.Decimal, _ []*Package) decimal.Decimal {
+	return CapForAmount(paid)
 }
 
 // SettleRun 是一个上海自然日的日结占位与计数。
@@ -1067,10 +1077,6 @@ func (uc *SettleUseCase) creditStaticForOrder(ctx context.Context, o *Order, spo
 }
 
 func (uc *SettleUseCase) refreshCaps(ctx context.Context) (*SettleResult, error) {
-	pkgs, err := uc.packages.ListAll(ctx)
-	if err != nil {
-		return nil, err
-	}
 	users, err := uc.users.ListAll(ctx)
 	if err != nil {
 		return nil, err
@@ -1084,7 +1090,7 @@ func (uc *SettleUseCase) refreshCaps(ctx context.Context) (*SettleResult, error)
 	}
 	result := &SettleResult{UserCount: len(users)}
 	for _, u := range users {
-		want := MatchCap(maxPaid[u.ID], pkgs)
+		want := CapForAmount(maxPaid[u.ID])
 		cur := money.Round(u.CapEffective)
 		if want.Equal(cur) {
 			continue

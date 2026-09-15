@@ -50,38 +50,32 @@ CREATE TABLE IF NOT EXISTS packages (
     amount      DECIMAL(36, 8)  NOT NULL,
     title       VARCHAR(128)    NOT NULL,
     goods_desc  VARCHAR(512)    NOT NULL DEFAULT '',
-    daily_cap     DECIMAL(36, 8)  NOT NULL COMMENT 'match cap of this package (max paid order, not sum)',
+    daily_cap     DECIMAL(36, 8)  NOT NULL DEFAULT 0 COMMENT 'legacy column; match cap is computed from order amount',
     release_days  INT             NOT NULL DEFAULT 300 COMMENT '300|600|750 default static release',
     sort_order    INT             NOT NULL DEFAULT 0,
     enabled     TINYINT(1)      NOT NULL DEFAULT 1,
     image       VARCHAR(512)    NOT NULL DEFAULT '',
+    detail      MEDIUMTEXT      NULL COMMENT 'web3 goods rich text detail',
     created_at  DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     updated_at  DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-    UNIQUE KEY uk_packages_amount_days (amount, release_days),
     KEY idx_packages_sort (sort_order, id)
 ) ENGINE=InnoDB DEFAULT CHARSET utf8mb4;
 
-INSERT INTO packages (amount, title, goods_desc, daily_cap, sort_order, enabled) VALUES
-(1000,    '1,000 组合', '牙刷挖矿', 600,     10, 1),
-(3000,    '3,000 组合', 'AI眼镜挖矿', 1800,    20, 1),
-(6000,    '6,000 组合', '分布式存储芯片挖矿机', 4000,    30, 1),
-(12000,   '12,000 组合', '分布式存储芯片挖矿＋手机挖矿＋黄金钻石戒指＋多肽', 8000,    40, 1),
-(24000,   '24,000 组合', '分布式存储芯片挖矿＋手机挖矿＋黄金钻石手链＋多肽', 16000,   50, 1),
-(36000,   '36,000 组合', '分布式存储芯片挖矿＋手机挖矿＋黄金钻石项链＋多肽', 24000,   60, 1),
-(50000,   '50,000 组合', '分布式存储芯片挖矿＋手机挖矿＋黄金钻石项链＋多肽', 30000,   70, 1),
-(70000,   '70,000 组合', '分布式存储芯片挖矿＋手机挖矿＋黄金钻石项链＋多肽', 42000,   80, 1),
-(100000,  '100,000 组合', '分布式存储芯片挖矿＋手机挖矿＋黄金钻石项链＋多肽', 60000,   90, 1),
-(160000,  '160,000 组合', '分布式存储芯片挖矿＋手机挖矿＋黄金钻石项链＋多肽', 100000, 100, 1)
-ON DUPLICATE KEY UPDATE title = VALUES(title), goods_desc = VALUES(goods_desc),
-    daily_cap = VALUES(daily_cap), sort_order = VALUES(sort_order), enabled = VALUES(enabled);
-
-INSERT IGNORE INTO packages (amount, title, goods_desc, daily_cap, release_days, sort_order, enabled, image)
-SELECT amount, title, goods_desc, daily_cap, 600, sort_order, enabled, image
-FROM (SELECT amount, title, goods_desc, daily_cap, sort_order, enabled, image FROM packages WHERE release_days = 300) src;
-
-INSERT IGNORE INTO packages (amount, title, goods_desc, daily_cap, release_days, sort_order, enabled, image)
-SELECT amount, title, goods_desc, daily_cap, 750, sort_order, enabled, image
-FROM (SELECT amount, title, goods_desc, daily_cap, sort_order, enabled, image FROM packages WHERE release_days = 300) src;
+INSERT INTO packages (amount, title, goods_desc, daily_cap, sort_order, enabled)
+SELECT v.amount, v.title, v.goods_desc, v.daily_cap, v.sort_order, v.enabled
+FROM (
+    SELECT 1000 AS amount, CAST('1,000 组合' AS CHAR(128)) AS title, CAST('牙刷挖矿' AS CHAR(512)) AS goods_desc, 600 AS daily_cap, 10 AS sort_order, 1 AS enabled
+    UNION ALL SELECT 3000, '3,000 组合', 'AI眼镜挖矿', 1800, 20, 1
+    UNION ALL SELECT 6000, '6,000 组合', '分布式存储芯片挖矿机', 4000, 30, 1
+    UNION ALL SELECT 12000, '12,000 组合', '分布式存储芯片挖矿＋手机挖矿＋黄金钻石戒指＋多肽', 8000, 40, 1
+    UNION ALL SELECT 24000, '24,000 组合', '分布式存储芯片挖矿＋手机挖矿＋黄金钻石手链＋多肽', 16000, 50, 1
+    UNION ALL SELECT 36000, '36,000 组合', '分布式存储芯片挖矿＋手机挖矿＋黄金钻石项链＋多肽', 24000, 60, 1
+    UNION ALL SELECT 50000, '50,000 组合', '分布式存储芯片挖矿＋手机挖矿＋黄金钻石项链＋多肽', 30000, 70, 1
+    UNION ALL SELECT 70000, '70,000 组合', '分布式存储芯片挖矿＋手机挖矿＋黄金钻石项链＋多肽', 42000, 80, 1
+    UNION ALL SELECT 100000, '100,000 组合', '分布式存储芯片挖矿＋手机挖矿＋黄金钻石项链＋多肽', 60000, 90, 1
+    UNION ALL SELECT 160000, '160,000 组合', '分布式存储芯片挖矿＋手机挖矿＋黄金钻石项链＋多肽', 100000, 100, 1
+) v
+WHERE NOT EXISTS (SELECT 1 FROM packages LIMIT 1);
 
 CREATE TABLE IF NOT EXISTS orders (
     id              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,

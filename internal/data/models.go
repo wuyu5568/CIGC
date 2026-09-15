@@ -113,6 +113,7 @@ type PackageModel struct {
 	SortOrder   int             `gorm:"column:sort_order"`
 	Enabled     bool
 	Image       string `gorm:"column:image;size:512"`
+	Detail      string `gorm:"column:detail;type:mediumtext"`
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }

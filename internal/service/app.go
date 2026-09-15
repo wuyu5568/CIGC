@@ -423,6 +423,9 @@ func (s *AppService) CompatBuy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
+		ID          json.RawMessage `json:"id"`
+		GoodsID     json.RawMessage `json:"goods_id"`
+		PackageID   json.RawMessage `json:"package_id"`
 		Amount      json.RawMessage `json:"amount"`
 		Days        json.RawMessage `json:"days"`
 		ReleaseDays json.RawMessage `json:"release_days"`
@@ -431,19 +434,25 @@ func (s *AppService) CompatBuy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "fail"})
 		return
 	}
-	amountStr := strings.Trim(string(body.Amount), `"`)
-	amount, err := parseAmount(amountStr)
-	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "金额错误"})
-		return
-	}
 	_ = r.ParseForm()
 	days, err := parseReleaseDays(firstNonEmpty(strings.Trim(string(body.ReleaseDays), `"`), strings.Trim(string(body.Days), `"`), r.Form.Get("release_days"), r.Form.Get("days")))
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "请选择释放天数"})
 		return
 	}
-	o, err := s.orders.BuyWithRecharge(r.Context(), uid, amount, days)
+	goodsID, _ := strconv.ParseUint(strings.Trim(firstNonEmpty(string(body.ID), string(body.GoodsID), string(body.PackageID)), `"`), 10, 64)
+	var o *biz.Order
+	if goodsID > 0 {
+		o, err = s.orders.BuyWithRechargeGoods(r.Context(), uid, goodsID, days)
+	} else {
+		amountStr := strings.Trim(string(body.Amount), `"`)
+		amount, aerr := parseAmount(amountStr)
+		if aerr != nil {
+			writeJSON(w, http.StatusOK, map[string]string{"status": "金额错误"})
+			return
+		}
+		o, err = s.orders.BuyWithRecharge(r.Context(), uid, amount, days)
+	}
 	if err != nil {
 		switch {
 		case errors.Is(err, biz.ErrPackageNotFound), errors.Is(err, biz.ErrPackageDisabled):

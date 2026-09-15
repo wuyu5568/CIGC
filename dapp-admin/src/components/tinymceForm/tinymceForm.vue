@@ -26,6 +26,10 @@
             height:{
                 type:Number,
                 default:500
+            },
+            uploadHandler:{
+                type:Function,
+                default: null
             }
         },
         data(){
@@ -46,7 +50,7 @@
                         toolbar_drawer:true,
                     },
                     plugins: 'link lists image code table wordcount',
-                    toolbar: 'undo redo | bold italic underline strikethrough | fontsizeselect | forecolor backcolor | alignleft aligncenter alignright alignjustify | bullist numlist | outdent indent blockquote | link unlink ',/*image*/
+                    toolbar: 'undo redo | bold italic underline strikethrough | fontsizeselect | forecolor backcolor | alignleft aligncenter alignright alignjustify | bullist numlist | outdent indent blockquote | link unlink image',
                     images_upload_handler: (blobInfo, success, failure) => {
                         this.handleImgUpload(blobInfo, success, failure)
                     },
@@ -71,6 +75,10 @@
         methods: {
             // 图片上传
             handleImgUpload(blobInfo, success, failure) {
+                if (typeof this.uploadHandler === 'function') {
+                    this.uploadHandler(blobInfo, success, failure)
+                    return
+                }
                 let formData = new FormData()
                 formData.append("image",blobInfo.blob())
                 User.uploadPic1(formData).then(res => {

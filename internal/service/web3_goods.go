@@ -11,6 +11,7 @@ import (
 
 	"github.com/cigc/app/internal/biz"
 	"github.com/cigc/app/internal/pkg/middleware/auth"
+	"github.com/cigc/app/internal/pkg/sanitize"
 	"github.com/cigc/app/internal/pkg/upload"
 )
 
@@ -26,7 +27,7 @@ func (s *AppService) uploadDir() string {
 	return "/data/uploads"
 }
 
-func (s *AppService) web3GoodsJSON(r *http.Request, p *biz.Package) map[string]any {
+func (s *AppService) web3GoodsJSON(r *http.Request, p *biz.Package, withDetail bool) map[string]any {
 	if p == nil {
 		return map[string]any{}
 	}
@@ -38,16 +39,26 @@ func (s *AppService) web3GoodsJSON(r *http.Request, p *biz.Package) map[string]a
 	if p.Enabled {
 		onSale = 1
 	}
-	return map[string]any{
-		"id":        p.ID,
-		"desc":      p.GoodsDesc,
-		"amount":    decStr(p.Amount),
-		"daily_cap": decStr(p.DailyCap),
-		"days":      days,
-		"sort":      p.SortOrder,
-		"on_sale":   onSale,
-		"image":     upload.AbsoluteURL(upload.PublicBaseURL(r), p.Image),
+	name := strings.TrimSpace(p.Title)
+	if name == "" {
+		name = p.GoodsDesc
 	}
+	out := map[string]any{
+		"id":         p.ID,
+		"name":       name,
+		"desc":       p.GoodsDesc,
+		"amount":     decStr(p.Amount),
+		"daily_cap":  decStr(biz.CapForAmount(p.Amount)),
+		"days":       days,
+		"sort":       p.SortOrder,
+		"on_sale":    onSale,
+		"image":      upload.AbsoluteURL(upload.PublicBaseURL(r), p.Image),
+		"has_detail": strings.TrimSpace(p.Detail) != "",
+	}
+	if withDetail {
+		out["detail"] = sanitize.HTML(p.Detail)
+	}
+	return out
 }
 
 func writeWeb3GoodsBiz(w http.ResponseWriter, err error) {
@@ -60,6 +71,8 @@ func writeWeb3GoodsBiz(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "请填写名称"})
 	case errors.Is(err, biz.ErrPackageDesc):
 		writeJSON(w, http.StatusOK, map[string]string{"status": "请填写描述"})
+	case errors.Is(err, biz.ErrPackageDetail):
+		writeJSON(w, http.StatusOK, map[string]string{"status": "详情过长"})
 	case errors.Is(err, biz.ErrPackageInUse):
 		writeJSON(w, http.StatusOK, map[string]string{"status": "已有订单不能删除，请先下架"})
 	case errors.Is(err, biz.ErrInvalidAmount):
@@ -74,9 +87,14 @@ func writeWeb3GoodsBiz(w http.ResponseWriter, err error) {
 func queryWeb3Days(r *http.Request) (int, error) {
 	raw := strings.TrimSpace(r.URL.Query().Get("days"))
 	if raw == "" {
-		return 0, biz.ErrInvalidReleaseDays
+		return 0, nil
 	}
 	return parseReleaseDays(raw)
+}
+
+func queryWeb3GoodsID(r *http.Request) uint64 {
+	id, _ := strconv.ParseUint(strings.TrimSpace(r.URL.Query().Get("id")), 10, 64)
+	return id
 }
 
 func (s *AppService) AdminWeb3GoodsList(w http.ResponseWriter, r *http.Request) {
@@ -92,7 +110,7 @@ func (s *AppService) AdminWeb3GoodsList(w http.ResponseWriter, r *http.Request) 
 	}
 	list := make([]map[string]any, 0, len(rows))
 	for _, p := range rows {
-		list = append(list, s.web3GoodsJSON(r, p))
+		list = append(list, s.web3GoodsJSON(r, p, false))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status": "ok",
@@ -101,14 +119,24 @@ func (s *AppService) AdminWeb3GoodsList(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+func (s *AppService) AdminWeb3GoodsDetail(w http.ResponseWriter, r *http.Request) {
+	id := queryWeb3GoodsID(r)
+	if id == 0 {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "商品不存在"})
+		return
+	}
+	p, err := s.orders.GetWeb3Goods(r.Context(), id, auth.IsUser(r.Context()))
+	if err != nil {
+		writeWeb3GoodsBiz(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "item": s.web3GoodsJSON(r, p, true)})
+}
+
 func (s *AppService) AdminWeb3GoodsCreate(w http.ResponseWriter, r *http.Request) {
 	in, err := readWeb3GoodsReq(r)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "金额错误"})
-		return
-	}
-	if !in.hasDays {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "请选择释放天数"})
 		return
 	}
 	p, err := s.orders.CreateWeb3Goods(r.Context(), &in.Web3GoodsInput)
@@ -116,7 +144,7 @@ func (s *AppService) AdminWeb3GoodsCreate(w http.ResponseWriter, r *http.Request
 		writeWeb3GoodsBiz(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "item": s.web3GoodsJSON(r, p)})
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "item": s.web3GoodsJSON(r, p, true)})
 }
 
 func (s *AppService) AdminWeb3GoodsUpdate(w http.ResponseWriter, r *http.Request) {
@@ -129,16 +157,12 @@ func (s *AppService) AdminWeb3GoodsUpdate(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusOK, map[string]string{"status": "商品不存在"})
 		return
 	}
-	if !in.hasDays {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "请选择释放天数"})
-		return
-	}
 	p, err := s.orders.UpdateWeb3Goods(r.Context(), &in.Web3GoodsInput)
 	if err != nil {
 		writeWeb3GoodsBiz(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "item": s.web3GoodsJSON(r, p)})
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "item": s.web3GoodsJSON(r, p, true)})
 }
 
 func (s *AppService) AdminWeb3GoodsStatus(w http.ResponseWriter, r *http.Request) {
@@ -151,20 +175,16 @@ func (s *AppService) AdminWeb3GoodsStatus(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusOK, map[string]string{"status": "商品不存在"})
 		return
 	}
-	if !in.hasDays {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "请选择释放天数"})
-		return
-	}
 	if !in.HasOnSale {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "fail"})
 		return
 	}
-	p, err := s.orders.SetWeb3GoodsOnSale(r.Context(), in.ID, in.Days, in.OnSale)
+	p, err := s.orders.SetWeb3GoodsOnSale(r.Context(), in.ID, in.OnSale)
 	if err != nil {
 		writeWeb3GoodsBiz(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "item": s.web3GoodsJSON(r, p)})
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "item": s.web3GoodsJSON(r, p, false)})
 }
 
 func (s *AppService) AdminWeb3GoodsDelete(w http.ResponseWriter, r *http.Request) {
@@ -177,11 +197,7 @@ func (s *AppService) AdminWeb3GoodsDelete(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusOK, map[string]string{"status": "商品不存在"})
 		return
 	}
-	if !in.hasDays {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "请选择释放天数"})
-		return
-	}
-	if err := s.orders.DeleteWeb3Goods(r.Context(), in.ID, in.Days); err != nil {
+	if err := s.orders.DeleteWeb3Goods(r.Context(), in.ID); err != nil {
 		writeWeb3GoodsBiz(w, err)
 		return
 	}
@@ -199,9 +215,11 @@ func (s *AppService) AdminWeb3GoodsImageUpload(w http.ResponseWriter, r *http.Re
 		return
 	}
 	daysRaw := firstNonEmpty(r.Form.Get("days"), r.Form.Get("release_days"))
-	if _, err := parseReleaseDays(daysRaw); err != nil {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "请选择释放天数"})
-		return
+	if daysRaw != "" {
+		if _, err := parseReleaseDays(daysRaw); err != nil {
+			writeJSON(w, http.StatusOK, map[string]string{"status": "请选择释放天数"})
+			return
+		}
 	}
 	f, hdr, err := r.FormFile("file")
 	if err != nil || f == nil {
@@ -280,6 +298,7 @@ func readWeb3GoodsReq(r *http.Request) (*web3GoodsReq, error) {
 			Sort     json.RawMessage `json:"sort"`
 			OnSale   json.RawMessage `json:"on_sale"`
 			Image    json.RawMessage `json:"image"`
+			Detail   json.RawMessage `json:"detail"`
 		}
 		if err := decodeJSON(r, &body); err != nil {
 			return nil, err
@@ -323,6 +342,10 @@ func readWeb3GoodsReq(r *http.Request) (*web3GoodsReq, error) {
 		if img := strings.Trim(string(body.Image), `"`); img != "" && img != "null" {
 			in.HasImage = true
 			in.Image = upload.NormalizeStored(img)
+		}
+		if s, ok := parseJSONString(body.Detail); ok {
+			in.HasDetail = true
+			in.Detail = s
 		}
 		return in, nil
 	}
@@ -380,7 +403,22 @@ func readWeb3GoodsReq(r *http.Request) (*web3GoodsReq, error) {
 		in.HasImage = true
 		in.Image = upload.NormalizeStored(img)
 	}
+	if _, ok := r.Form["detail"]; ok {
+		in.HasDetail = true
+		in.Detail = r.Form.Get("detail")
+	}
 	return in, nil
+}
+
+func parseJSONString(raw json.RawMessage) (string, bool) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return "", false
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return "", false
+	}
+	return s, true
 }
 
 func parseAdminForm(r *http.Request) error {

@@ -109,6 +109,7 @@ func registerAdminRoutes(srv *khttp.Server, prefix, jwt string, svc *service.App
 	srv.Handle(prefix+"/package_update", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.CompatAdminPackageUpdate)))
 	srv.Handle(prefix+"/package_delete", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.CompatAdminPackageDelete)))
 	srv.Handle(prefix+"/web3_goods", stdhttp.HandlerFunc(auth.RequireAdminOrUserGET(jwt, svc.AdminWeb3GoodsList)))
+	srv.Handle(prefix+"/web3_goods_detail", stdhttp.HandlerFunc(auth.RequireAdminOrUserGET(jwt, svc.AdminWeb3GoodsDetail)))
 	srv.Handle(prefix+"/web3_goods_create", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.AdminWeb3GoodsCreate)))
 	srv.Handle(prefix+"/web3_goods_update", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.AdminWeb3GoodsUpdate)))
 	srv.Handle(prefix+"/web3_goods_status", stdhttp.HandlerFunc(auth.RequireAdminJWT(jwt, svc.AdminWeb3GoodsStatus)))

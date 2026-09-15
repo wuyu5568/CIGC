@@ -26,6 +26,7 @@ func toBizPackage(m *PackageModel) *biz.Package {
 		SortOrder:   m.SortOrder,
 		Enabled:     m.Enabled,
 		Image:       m.Image,
+		Detail:      m.Detail,
 	}
 }
 
@@ -96,6 +97,7 @@ func (r *packageRepo) Update(ctx context.Context, p *biz.Package) (*biz.Package,
 		"sort_order":   p.SortOrder,
 		"enabled":      p.Enabled,
 		"image":        p.Image,
+		"detail":       p.Detail,
 	})
 	if res.Error != nil {
 		if isDuplicateKey(res.Error) {
@@ -119,6 +121,7 @@ func (r *packageRepo) Create(ctx context.Context, p *biz.Package) (*biz.Package,
 		SortOrder:   p.SortOrder,
 		Enabled:     p.Enabled,
 		Image:       p.Image,
+		Detail:      p.Detail,
 	}
 	if err := r.data.Session(ctx).Create(&m).Error; err != nil {
 		if isDuplicateKey(err) {

@@ -301,6 +301,13 @@ export default {
             notify: false
         })
     },
+    web3_goods_detail: (parameter) => {
+        return axios({
+            url: `${api8005}/web3_goods_detail`,
+            method: 'get',
+            params: parameter
+        })
+    },
     package_create: (parameter) => {
         return axios({
             url: `${api8005}/package_create`,
