@@ -29,16 +29,23 @@
       <div class="pledge">
         <div class="pledge-info">
           <div class="pledge-item">
-            <p>{{ lang('待释放') }}ISPAY:</p>
+            <p>{{ lang('待释放') }}ISPAY</p>
             <p>{{ userinfo.amountGetSub || 0 }}</p>
           </div>
           <div class="pledge-item">
-            <p>{{ lang('已释放') }}ISPAY:</p>
+            <p>{{ lang('已释放') }}ISPAY</p>
             <p>{{ userinfo.amountGet || 0 }}</p>
           </div>
         </div>
-        <div class="pledge-count">
-          {{ lang('释放次数') }}<span>{{ userinfo.outNum || 0 }}</span>
+        <div class="pledge-info">
+          <div class="pledge-item">
+            <p>{{ lang('冻结') }} USDT</p>
+            <p>{{ userinfo.lock_balance || userinfo.lockBalance || userinfo.lock || 0 }}</p>
+          </div>
+          <div class="pledge-item">
+            <p>{{ lang('冻结') }} ISPAY</p>
+            <p>{{ userinfo.lock_ispay || userinfo.lockIspay || 0 }}</p>
+          </div>
         </div>
       </div>
       <div class="pledge-frame">
@@ -474,14 +481,21 @@ const handleBack = () => {
         }
         .pledge-count {
           border-top: 1px solid rgba(255, 255, 255, 0.1);
-          background: url('@/assets/images/xian.png') no-repeat;
-          background-size: 100% auto;
-          padding: 60px 0 20px 0;
-          text-align: center;
-          span {
-            color: rgb(255, 209, 39);
+          padding: 12px 15px 16px;
+          display: flex;
+          gap: 12px;
+          .freeze-btn {
+            flex: 1;
+            height: 40px;
+            border: 1px solid rgba(168, 176, 255, 0.55);
+            border-radius: 26px;
+            background: rgba(109, 118, 255, 0.42);
+            color: #eef0ff;
+            font-size: 13px;
             font-weight: 500;
-            margin-left: 10px;
+            line-height: 1;
+            padding: 0 10px;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
           }
         }
       }

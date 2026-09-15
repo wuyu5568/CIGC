@@ -10,7 +10,7 @@
   <div class="page-main">
     <div class="withdraw-info">
       <p class="withdraw-balance">USDT: {{ displayAmount(userinfo.amountUsdt) }}</p>
-      <p class="withdraw-balance">BRC20: {{ userinfo.rawNew || 0.0000 }}</p>
+      <!-- <p class="withdraw-balance">BRC20: {{ userinfo.rawNew || 0.0000 }}</p> -->
       <button class="withdraw-btn" @click="showWithdraw"><van-icon name="balance-pay" />{{ lang('充值') }}</button>
     </div>
     <div class="withdraw-tab">
