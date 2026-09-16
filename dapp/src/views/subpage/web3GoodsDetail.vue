@@ -87,13 +87,13 @@ const fetchDetail = async () => {
   const id = Number(route.params.id)
   if (!id) {
     item = {}
-    showFailToast(lang('商品不存在'))
     return
   }
   loading = true
   await request.get('admin/web3_goods_detail', {
     params: { id }
   }).then((res) => {
+    if (Number(route.params.id) !== id) return
     if (res && res.status === 'ok' && res.item) {
       item = res.item
     } else {
@@ -101,6 +101,7 @@ const fetchDetail = async () => {
       showFailToast(res?.status || lang('商品不存在'))
     }
   }).catch(() => {
+    if (Number(route.params.id) !== id) return
     item = {}
     showFailToast(lang('商品不存在'))
   }).finally(() => {
