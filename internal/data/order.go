@@ -34,7 +34,7 @@ func (r *packageRepo) ListEnabled(ctx context.Context) ([]*biz.Package, error) {
 	var rows []PackageModel
 	if err := r.data.db.WithContext(ctx).
 		Where("enabled = ?", true).
-		Order("sort_order ASC, id ASC").
+		Order("amount ASC, id ASC").
 		Find(&rows).Error; err != nil {
 		return nil, err
 	}
@@ -48,7 +48,7 @@ func (r *packageRepo) ListEnabled(ctx context.Context) ([]*biz.Package, error) {
 func (r *packageRepo) ListAll(ctx context.Context) ([]*biz.Package, error) {
 	var rows []PackageModel
 	if err := r.data.db.WithContext(ctx).
-		Order("sort_order ASC, id ASC").
+		Order("amount ASC, id ASC").
 		Find(&rows).Error; err != nil {
 		return nil, err
 	}

@@ -10,10 +10,10 @@ import (
 
 func TestListWeb3GoodsPaginatesWithoutDays(t *testing.T) {
 	pkgs := &memPackages{rows: []*Package{
-		{ID: 1, Amount: decimal.RequireFromString("1000"), Title: "a", ReleaseDays: 300, Enabled: true},
-		{ID: 2, Amount: decimal.RequireFromString("2000"), Title: "b", ReleaseDays: 300, Enabled: false},
-		{ID: 3, Amount: decimal.RequireFromString("3000"), Title: "c", ReleaseDays: 600, Enabled: true},
 		{ID: 4, Amount: decimal.RequireFromString("4000"), Title: "d", ReleaseDays: 750, Enabled: true},
+		{ID: 1, Amount: decimal.RequireFromString("1000"), Title: "a", ReleaseDays: 300, Enabled: true},
+		{ID: 3, Amount: decimal.RequireFromString("3000"), Title: "c", ReleaseDays: 600, Enabled: true},
+		{ID: 2, Amount: decimal.RequireFromString("2000"), Title: "b", ReleaseDays: 300, Enabled: false},
 	}}
 	uc := NewOrderUseCase(pkgs, newMemOrders(newMemUsers()), newMemUsers(), newMemUsers(), &memLedger{})
 	if _, _, err := uc.ListWeb3Goods(context.Background(), 90, 1, 10, false); err != ErrInvalidReleaseDays {
@@ -22,6 +22,9 @@ func TestListWeb3GoodsPaginatesWithoutDays(t *testing.T) {
 	all, total, err := uc.ListWeb3Goods(context.Background(), 0, 1, 10, false)
 	if err != nil || total != 4 || len(all) != 4 {
 		t.Fatalf("all: total=%d rows=%+v err=%v", total, all, err)
+	}
+	if all[0].ID != 1 || all[1].ID != 2 || all[2].ID != 3 || all[3].ID != 4 {
+		t.Fatalf("amount order: %+v", []uint64{all[0].ID, all[1].ID, all[2].ID, all[3].ID})
 	}
 	onSale, total, err := uc.ListWeb3Goods(context.Background(), 0, 1, 10, true)
 	if err != nil || total != 3 || len(onSale) != 3 {

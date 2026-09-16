@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"sort"
 	"strings"
 	"time"
 
@@ -179,14 +180,41 @@ func (uc *OrderUseCase) SetPaidHook(h OrderPaidHook) {
 	}
 }
 
-// ListPackages 返回已上架套餐。
-func (uc *OrderUseCase) ListPackages(ctx context.Context) ([]*Package, error) {
-	return uc.packages.ListEnabled(ctx)
+// SortPackagesByAmount 按单价从低到高，同价再按 id。
+func SortPackagesByAmount(pkgs []*Package) {
+	sort.SliceStable(pkgs, func(i, j int) bool {
+		a, b := pkgs[i], pkgs[j]
+		if a == nil {
+			return false
+		}
+		if b == nil {
+			return true
+		}
+		if !a.Amount.Equal(b.Amount) {
+			return a.Amount.LessThan(b.Amount)
+		}
+		return a.ID < b.ID
+	})
 }
 
-// ListAllPackages 管理端套餐一览（含下架）。
+// ListPackages 返回已上架套餐，按单价从低到高。
+func (uc *OrderUseCase) ListPackages(ctx context.Context) ([]*Package, error) {
+	pkgs, err := uc.packages.ListEnabled(ctx)
+	if err != nil {
+		return nil, err
+	}
+	SortPackagesByAmount(pkgs)
+	return pkgs, nil
+}
+
+// ListAllPackages 管理端套餐一览（含下架），按单价从低到高。
 func (uc *OrderUseCase) ListAllPackages(ctx context.Context) ([]*Package, error) {
-	return uc.packages.ListAll(ctx)
+	pkgs, err := uc.packages.ListAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	SortPackagesByAmount(pkgs)
+	return pkgs, nil
 }
 
 // PackageReleaseDays 套餐默认释放档；非法或缺省按 300。
@@ -429,6 +457,7 @@ func (uc *OrderUseCase) ListWeb3Goods(ctx context.Context, days, page, pageSize 
 	if onSaleOnly {
 		all = FilterEnabledPackages(all)
 	}
+	SortPackagesByAmount(all)
 	total := len(all)
 	start := (page - 1) * pageSize
 	if start >= total {
