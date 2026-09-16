@@ -76,6 +76,7 @@ func (s *AppService) web3GoodsJSON(r *http.Request, p *biz.Package, withDetail b
 		"daily_cap":  decStr(biz.CapForAmount(p.Amount)),
 		"days":       days,
 		"sort":       p.SortOrder,
+		"sort_order": p.SortOrder,
 		"on_sale":    onSale,
 		"image":      upload.AbsoluteURL(upload.PublicBaseURL(r), selected.Image),
 		"has_detail": strings.TrimSpace(selected.Detail) != "",
@@ -250,6 +251,23 @@ func (s *AppService) AdminWeb3GoodsDelete(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err := s.orders.DeleteWeb3Goods(r.Context(), in.ID); err != nil {
+		writeWeb3GoodsBiz(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+}
+
+func (s *AppService) AdminWeb3GoodsSort(w http.ResponseWriter, r *http.Request) {
+	ids, err := parseWeb3GoodsSortIDs(r)
+	if err != nil || len(ids) == 0 {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "排序参数错误"})
+		return
+	}
+	if err := s.orders.SortWeb3Goods(r.Context(), ids); err != nil {
+		if errors.Is(err, biz.ErrInvalidAmount) {
+			writeJSON(w, http.StatusOK, map[string]string{"status": "排序参数错误"})
+			return
+		}
 		writeWeb3GoodsBiz(w, err)
 		return
 	}
@@ -507,4 +525,49 @@ func parseOnSaleFlag(s string) bool {
 		return false
 	}
 	return isTruthyFlag(s)
+}
+
+func parseWeb3GoodsSortIDs(r *http.Request) ([]uint64, error) {
+	ct := r.Header.Get("Content-Type")
+	if strings.Contains(ct, "json") {
+		var body struct {
+			IDs json.RawMessage `json:"ids"`
+		}
+		if err := decodeJSON(r, &body); err != nil {
+			return nil, err
+		}
+		return parseIDList(string(body.IDs))
+	}
+	if err := parseAdminForm(r); err != nil {
+		return nil, err
+	}
+	raw := firstNonEmpty(r.Form.Get("ids"), strings.Join(r.Form["ids"], ","))
+	return parseIDList(raw)
+}
+
+func parseIDList(raw string) ([]uint64, error) {
+	raw = strings.TrimSpace(raw)
+	raw = strings.Trim(raw, `[]"`)
+	if raw == "" || raw == "null" {
+		return nil, biz.ErrInvalidAmount
+	}
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\n' || r == '\t'
+	})
+	out := make([]uint64, 0, len(parts))
+	for _, p := range parts {
+		p = strings.Trim(p, `"'`)
+		if p == "" {
+			continue
+		}
+		id, err := strconv.ParseUint(p, 10, 64)
+		if err != nil || id == 0 {
+			return nil, biz.ErrInvalidAmount
+		}
+		out = append(out, id)
+	}
+	if len(out) == 0 {
+		return nil, biz.ErrInvalidAmount
+	}
+	return out, nil
 }

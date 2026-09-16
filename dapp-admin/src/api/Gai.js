@@ -314,6 +314,14 @@ export default {
             data: parameter
         })
     },
+    web3_goods_sort: (parameter) => {
+        return axios({
+            url: `${api8005}/web3_goods_sort`,
+            method: 'post',
+            data: parameter,
+            notify: false
+        })
+    },
     web3_goods_image_upload: (parameter) => {
         return axios({
             url: `${api8005}/web3_goods_image_upload`,

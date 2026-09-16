@@ -165,3 +165,45 @@ func TestWeb3GoodsDetailCreateAndKeepOnUpdate(t *testing.T) {
 		t.Fatalf("replace detail %+v", got)
 	}
 }
+
+func TestSortWeb3GoodsReordersAndLists(t *testing.T) {
+	pkgs := &memPackages{rows: []*Package{
+		{ID: 1, Amount: decimal.RequireFromString("1000"), Title: "a", Enabled: true},
+		{ID: 2, Amount: decimal.RequireFromString("2000"), Title: "b", Enabled: true},
+		{ID: 3, Amount: decimal.RequireFromString("3000"), Title: "c", Enabled: true},
+		{ID: 4, Amount: decimal.RequireFromString("4000"), Title: "d", Enabled: false},
+	}}
+	uc := NewOrderUseCase(pkgs, newMemOrders(newMemUsers()), newMemUsers(), newMemUsers(), &memLedger{})
+	if err := uc.SortWeb3Goods(context.Background(), []uint64{4, 2, 1, 3}); err != nil {
+		t.Fatal(err)
+	}
+	all, total, err := uc.ListWeb3Goods(context.Background(), 0, 1, 10, false)
+	if err != nil || total != 4 || len(all) != 4 {
+		t.Fatalf("list %+v total=%d err=%v", all, total, err)
+	}
+	got := []uint64{all[0].ID, all[1].ID, all[2].ID, all[3].ID}
+	if got[0] != 4 || got[1] != 2 || got[2] != 1 || got[3] != 3 {
+		t.Fatalf("order %+v", got)
+	}
+	if err := uc.SortWeb3Goods(context.Background(), []uint64{1, 4}); err != nil {
+		t.Fatal(err)
+	}
+	all, _, err = uc.ListWeb3Goods(context.Background(), 0, 1, 10, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = []uint64{all[0].ID, all[1].ID, all[2].ID, all[3].ID}
+	if got[0] != 1 || got[1] != 2 || got[2] != 4 || got[3] != 3 {
+		t.Fatalf("subset order %+v", got)
+	}
+	created, err := uc.CreateWeb3Goods(context.Background(), &Web3GoodsInput{
+		Name: "e", Amount: decimal.RequireFromString("500"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	all, _, err = uc.ListWeb3Goods(context.Background(), 0, 1, 10, false)
+	if err != nil || len(all) != 5 || all[4].ID != created.ID {
+		t.Fatalf("append new %+v err=%v", all, err)
+	}
+}

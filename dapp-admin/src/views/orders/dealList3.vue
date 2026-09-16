@@ -2,10 +2,20 @@
     <PageView>
         <a-card>
             <div class="goods-toolbar">
+                <span class="sort-hint">拖拽左侧图标可调整商品在商城中的展示顺序</span>
                 <a-button type="primary" @click="openCreate">新增商品</a-button>
             </div>
-            <a-table :loading="loading" :columns="columns" :dataSource="data" :pagination="{ total, pageSize, current }"
-                @change="changePagination" bordered :scroll="{ x: true }">
+            <a-table
+                :loading="loading || sorting"
+                :columns="columns"
+                :dataSource="data"
+                :pagination="{ total, pageSize, current }"
+                :customRow="customRow"
+                rowKey="id"
+                @change="changePagination"
+                bordered
+                :scroll="{ x: true }"
+            >
             </a-table>
         </a-card>
 
@@ -189,8 +199,28 @@ export default {
                 sm: { span: 18 },
             },
             confirmLoading: false,
+            sorting: false,
+            dragIndex: -1,
+            dragOverId: null,
             capTiers: [],
             columns: [
+                {
+                    title: '',
+                    key: 'drag',
+                    width: 48,
+                    customRender: (v, row, index) => {
+                        return (
+                            <span
+                                class="drag-handle"
+                                draggable="true"
+                                onDragstart={(e) => this.onDragStart(e, index)}
+                                onDragend={() => this.onDragEnd()}
+                            >
+                                <a-icon type="menu" />
+                            </span>
+                        )
+                    },
+                },
                 {
                     title: 'ID',
                     dataIndex: 'id',
@@ -278,6 +308,62 @@ export default {
         },
     },
     methods: {
+        customRow(record) {
+            return {
+                on: {
+                    dragover: (e) => {
+                        e.preventDefault()
+                        this.dragOverId = record.id
+                    },
+                    drop: (e) => {
+                        e.preventDefault()
+                        this.onDrop(record.id, e)
+                    },
+                },
+                class: this.dragOverId === record.id ? 'is-drag-over' : '',
+            }
+        },
+        onDragStart(e, index) {
+            this.dragIndex = index
+            if (e && e.stopPropagation) e.stopPropagation()
+            if (e && e.dataTransfer) {
+                e.dataTransfer.effectAllowed = 'move'
+                e.dataTransfer.setData('text/plain', String(index))
+            }
+        },
+        onDragEnd() {
+            this.dragOverId = null
+        },
+        onDrop(targetId, e) {
+            const raw = e && e.dataTransfer ? e.dataTransfer.getData('text/plain') : ''
+            const from = raw === '' ? this.dragIndex : Number(raw)
+            const to = this.data.findIndex((row) => String(row.id) === String(targetId))
+            this.dragIndex = -1
+            this.dragOverId = null
+            if (!Number.isFinite(from) || from < 0 || to < 0 || from === to || this.sorting) return
+            const next = this.data.slice()
+            const moved = next.splice(from, 1)[0]
+            next.splice(to, 0, moved)
+            this.data = next
+            this.saveSort()
+        },
+        saveSort() {
+            const ids = this.data.map((row) => row.id).filter((id) => id)
+            if (!ids.length) return
+            this.sorting = true
+            Gai.web3_goods_sort({ ids: ids.join(',') }).then((res) => {
+                if (res && res.status && res.status !== 'ok') {
+                    this.$message.error(res.status)
+                    this.getList()
+                    return
+                }
+                this.$message.success('顺序已保存')
+            }).catch(() => {
+                this.getList()
+            }).finally(() => {
+                this.sorting = false
+            })
+        },
         showImage(v) {
             if (!v) return
             this.previewUrl = v
@@ -533,8 +619,8 @@ export default {
                 page: this.current,
                 page_size: this.pageSize,
             }).then((res) => {
-                this.data = (res.list || []).map((value, key) => {
-                    return { ...value, key }
+                this.data = (res.list || []).map((value) => {
+                    return { ...value, key: value.id }
                 })
                 this.total = parseInt(res.count || 0)
                 this.loading = false
@@ -550,8 +636,13 @@ export default {
 .goods-toolbar {
     display: flex;
     align-items: center;
-    justify-content: flex-end;
+    justify-content: space-between;
+    gap: 16px;
     margin-bottom: 16px;
+}
+.sort-hint {
+    color: rgba(0, 0, 0, 0.45);
+    font-size: 13px;
 }
 .detail-editor {
     margin-top: 8px;
@@ -592,5 +683,17 @@ export default {
 .tox-menu,
 .tox-dialog-wrap {
     z-index: 4000 !important;
+}
+.drag-handle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    cursor: move;
+    color: rgba(0, 0, 0, 0.45);
+}
+.ant-table-tbody > tr.is-drag-over > td {
+    border-top: 2px solid #1890ff;
 }
 </style>

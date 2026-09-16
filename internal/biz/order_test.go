@@ -68,6 +68,16 @@ func (m *memPackages) Update(_ context.Context, p *Package) (*Package, error) {
 	return nil, ErrPackageNotFound
 }
 
+func (m *memPackages) UpdateSortOrder(_ context.Context, id uint64, sort int) error {
+	for _, row := range m.rows {
+		if row.ID == id {
+			row.SortOrder = sort
+			return nil
+		}
+	}
+	return ErrPackageNotFound
+}
+
 func (m *memPackages) Create(_ context.Context, p *Package) (*Package, error) {
 	cp := *p
 	var maxID uint64

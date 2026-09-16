@@ -172,6 +172,20 @@ func (r *packageRepo) Update(ctx context.Context, p *biz.Package) (*biz.Package,
 	return r.FindByID(ctx, p.ID)
 }
 
+func (r *packageRepo) UpdateSortOrder(ctx context.Context, id uint64, sort int) error {
+	if id == 0 {
+		return biz.ErrPackageNotFound
+	}
+	res := r.data.Session(ctx).Model(&PackageModel{}).Where("id = ?", id).Update("sort_order", sort)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return biz.ErrPackageNotFound
+	}
+	return nil
+}
+
 func (r *packageRepo) Create(ctx context.Context, p *biz.Package) (*biz.Package, error) {
 	m := PackageModel{
 		Amount:      p.Amount,

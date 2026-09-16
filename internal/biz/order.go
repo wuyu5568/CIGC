@@ -125,6 +125,7 @@ type PackageRepo interface {
 	FindByID(ctx context.Context, id uint64) (*Package, error)
 	Create(ctx context.Context, p *Package) (*Package, error)
 	Update(ctx context.Context, p *Package) (*Package, error)
+	UpdateSortOrder(ctx context.Context, id uint64, sort int) error
 	Delete(ctx context.Context, id uint64) error
 }
 
@@ -197,6 +198,26 @@ func SortPackagesByAmount(pkgs []*Package) {
 		}
 		if b == nil {
 			return true
+		}
+		if !a.Amount.Equal(b.Amount) {
+			return a.Amount.LessThan(b.Amount)
+		}
+		return a.ID < b.ID
+	})
+}
+
+// SortPackagesBySortOrder 按后台拖拽顺序；未排序时退回单价、id。
+func SortPackagesBySortOrder(pkgs []*Package) {
+	sort.SliceStable(pkgs, func(i, j int) bool {
+		a, b := pkgs[i], pkgs[j]
+		if a == nil {
+			return false
+		}
+		if b == nil {
+			return true
+		}
+		if a.SortOrder != b.SortOrder {
+			return a.SortOrder < b.SortOrder
 		}
 		if !a.Amount.Equal(b.Amount) {
 			return a.Amount.LessThan(b.Amount)
@@ -425,9 +446,6 @@ func normalizeWeb3Goods(in *Web3GoodsInput, create bool) error {
 	}
 	if create {
 		in.DailyCap = decimal.Zero
-		if !in.HasSort {
-			in.Sort = 0
-		}
 		if !in.HasOnSale {
 			in.OnSale = true
 		}
@@ -480,7 +498,7 @@ func (uc *OrderUseCase) ListWeb3Goods(ctx context.Context, days, page, pageSize 
 	if onSaleOnly {
 		all = FilterEnabledPackages(all)
 	}
-	SortPackagesByAmount(all)
+	SortPackagesBySortOrder(all)
 	total := len(all)
 	start := (page - 1) * pageSize
 	if start >= total {
@@ -536,6 +554,13 @@ func (uc *OrderUseCase) CreateWeb3Goods(ctx context.Context, in *Web3GoodsInput)
 	if err := normalizeWeb3Goods(in, true); err != nil {
 		return nil, err
 	}
+	if !in.HasSort {
+		next, err := uc.nextWeb3GoodsSort(ctx)
+		if err != nil {
+			return nil, err
+		}
+		in.Sort = next
+	}
 	return uc.packages.Create(ctx, in.toPackage(0, in.Image, in.Detail))
 }
 
@@ -552,7 +577,9 @@ func (uc *OrderUseCase) UpdateWeb3Goods(ctx context.Context, in *Web3GoodsInput)
 		return nil, err
 	}
 	in.DailyCap = cur.DailyCap
-	in.Sort = cur.SortOrder
+	if !in.HasSort {
+		in.Sort = cur.SortOrder
+	}
 	in.Days = PackageReleaseDays(cur)
 	if !in.HasOnSale {
 		in.OnSale = cur.Enabled
@@ -575,6 +602,87 @@ func (uc *OrderUseCase) UpdateWeb3Goods(ctx context.Context, in *Web3GoodsInput)
 		}
 	}
 	return uc.packages.Update(ctx, next)
+}
+
+func (uc *OrderUseCase) nextWeb3GoodsSort(ctx context.Context) (int, error) {
+	pkgs, err := uc.packages.ListAll(ctx)
+	if err != nil {
+		return 0, err
+	}
+	max := 0
+	for _, p := range pkgs {
+		if p != nil && p.SortOrder > max {
+			max = p.SortOrder
+		}
+	}
+	return max + 1, nil
+}
+
+// SortWeb3Goods 按 ids 调整商品顺序；只传部分 id 时，在原列表对应位置内重排。
+func (uc *OrderUseCase) SortWeb3Goods(ctx context.Context, ids []uint64) error {
+	if len(ids) == 0 {
+		return ErrInvalidAmount
+	}
+	seen := make(map[uint64]struct{}, len(ids))
+	for _, id := range ids {
+		if id == 0 {
+			return ErrPackageNotFound
+		}
+		if _, ok := seen[id]; ok {
+			return ErrInvalidAmount
+		}
+		seen[id] = struct{}{}
+	}
+	pkgs, err := uc.packages.ListAll(ctx)
+	if err != nil {
+		return err
+	}
+	SortPackagesBySortOrder(pkgs)
+	byID := make(map[uint64]*Package, len(pkgs))
+	for _, p := range pkgs {
+		if p == nil || p.ID == 0 {
+			continue
+		}
+		byID[p.ID] = p
+	}
+	pos := make([]int, 0, len(ids))
+	for i, p := range pkgs {
+		if p == nil {
+			continue
+		}
+		if _, ok := seen[p.ID]; ok {
+			pos = append(pos, i)
+		}
+	}
+	if len(pos) != len(ids) {
+		return ErrPackageNotFound
+	}
+	for i, id := range ids {
+		p, ok := byID[id]
+		if !ok {
+			return ErrPackageNotFound
+		}
+		pkgs[pos[i]] = p
+	}
+	if uc.tx == nil {
+		uc.tx = NopTx{}
+	}
+	return uc.tx.InTx(ctx, func(ctx context.Context) error {
+		for i, p := range pkgs {
+			if p == nil || p.ID == 0 {
+				continue
+			}
+			sortVal := i + 1
+			if p.SortOrder == sortVal {
+				continue
+			}
+			if err := uc.packages.UpdateSortOrder(ctx, p.ID, sortVal); err != nil {
+				return err
+			}
+			p.SortOrder = sortVal
+		}
+		return nil
+	})
 }
 
 // SetWeb3GoodsOnSale 上架/下架。
