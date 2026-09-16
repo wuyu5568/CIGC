@@ -296,12 +296,12 @@ func (s *AppService) userAssetStats(ctx context.Context, userID uint64) (map[str
 			return nil, err
 		}
 		for _, o := range rows {
-			if o == nil {
+			if o == nil || o.Status != biz.OrderPaid {
 				continue
 			}
 			it := rel[o.ID]
-			pending = pending.Add(it.PendingUSDT)
-			released = released.Add(it.ReleasedUSDT)
+			pending = pending.Add(it.PendingCoins)
+			released = released.Add(it.ReleasedCoins)
 		}
 	}
 	staticT, direct, match, manage := decimal.Zero, decimal.Zero, decimal.Zero, decimal.Zero
@@ -312,6 +312,10 @@ func (s *AppService) userAssetStats(ctx context.Context, userID uint64) (map[str
 		if err != nil {
 			return nil, err
 		}
+		staticT = biz.ValueFromUSDTHalf(staticT)
+		direct = biz.ValueFromUSDTHalf(direct)
+		match = biz.ValueFromUSDTHalf(match)
+		manage = biz.ValueFromUSDTHalf(manage)
 	}
 	return map[string]any{
 		"amountGetSub":   decStr(money.Round(pending)),
@@ -706,10 +710,13 @@ func (s *AppService) CompatOrderList(w http.ResponseWriter, r *http.Request) {
 			"buy_contract":   s.buyContract(),
 			"today_usdt":     decStr(rel.TodayUSDT),
 			"today_ispay":    decStr(rel.TodayIspay),
+			"coins":          decStr(rel.Coins),
+			"released_coins": decStr(rel.ReleasedCoins),
+			"pending_coins":  decStr(rel.PendingCoins),
 			"released_usdt":  decStr(rel.ReleasedUSDT),
-			"released_ispay": decStr(rel.ReleasedIspay),
+			"released_ispay": decStr(rel.ReleasedCoins),
 			"pending_usdt":   decStr(rel.PendingUSDT),
-			"pending_ispay":  decStr(rel.PendingIspay),
+			"pending_ispay":  decStr(rel.PendingCoins),
 			"settle_date":    rel.SettleDate,
 		}
 		item["created_at"] = o.CreatedAt.Format("2006-01-02 15:04:05")
@@ -2114,6 +2121,7 @@ func recommendNodeJSON(n *biz.RecommendNode) map[string]any {
 		"user_id": n.UserID,
 		"address": n.Address,
 		"amount":  decStr(n.Amount),
+		"count":   n.Count,
 		"side":    n.Side,
 	}
 	kids := make([]map[string]any, 0, 2)
@@ -2176,6 +2184,7 @@ func downlineSlotJSON(n *biz.RecommendNode) map[string]any {
 		"user_id": n.UserID,
 		"address": n.Address,
 		"amount":  decStr(n.Amount),
+		"count":   n.Count,
 		"side":    n.Side,
 	}
 	if n.Left != nil {

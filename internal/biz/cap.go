@@ -40,11 +40,12 @@ func defaultCapTiers() []CapTier {
 		{Max: decimal.RequireFromString("3000"), Cap: decimal.RequireFromString("600")},
 		{Max: decimal.RequireFromString("6000"), Cap: decimal.RequireFromString("1800")},
 		{Max: decimal.RequireFromString("12000"), Cap: decimal.RequireFromString("4000")},
-		{Max: decimal.RequireFromString("24000"), Cap: decimal.RequireFromString("16000")},
-		{Max: decimal.RequireFromString("36000"), Cap: decimal.RequireFromString("24000")},
-		{Max: decimal.RequireFromString("50000"), Cap: decimal.RequireFromString("30000")},
-		{Max: decimal.RequireFromString("70000"), Cap: decimal.RequireFromString("42000")},
-		{Max: decimal.RequireFromString("100000"), Cap: decimal.RequireFromString("60000")},
+		{Max: decimal.RequireFromString("24000"), Cap: decimal.RequireFromString("8000")},
+		{Max: decimal.RequireFromString("36000"), Cap: decimal.RequireFromString("16000")},
+		{Max: decimal.RequireFromString("50000"), Cap: decimal.RequireFromString("24000")},
+		{Max: decimal.RequireFromString("70000"), Cap: decimal.RequireFromString("30000")},
+		{Max: decimal.RequireFromString("100000"), Cap: decimal.RequireFromString("42000")},
+		{Max: decimal.RequireFromString("160000"), Cap: decimal.RequireFromString("60000")},
 		{Unbounded: true, Cap: decimal.RequireFromString("100000")},
 	}
 }

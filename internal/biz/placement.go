@@ -47,11 +47,12 @@ type PlacementRepo interface {
 	ListAll(ctx context.Context) ([]*Placement, error)
 }
 
-// RecommendNode 安置直接子及其子树累计已支付。
+// RecommendNode 安置直接子及其子树累计已支付、人数（含自己）。
 type RecommendNode struct {
 	UserID  uint64
 	Address string
 	Amount  decimal.Decimal
+	Count   int
 	Side    string
 	Left    *RecommendNode
 	Right   *RecommendNode
@@ -558,23 +559,23 @@ func (uc *PlacementUseCase) ExpandRecommendTrees(ctx context.Context, nodes []*R
 	if len(nodes) == 0 {
 		return nil
 	}
-	kids, paid, err := uc.placementKidsAndPaid(ctx)
+	kids, paid, counts, err := uc.placementKidsAndPaid(ctx)
 	if err != nil {
 		return err
 	}
 	seen := map[uint64]struct{}{}
 	for _, n := range nodes {
-		if err := uc.attachPlacementChildren(ctx, n, kids, paid, seen, 0); err != nil {
+		if err := uc.attachPlacementChildren(ctx, n, kids, paid, counts, seen, 0); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (uc *PlacementUseCase) placementKidsAndPaid(ctx context.Context) (map[uint64][]*Placement, map[uint64]decimal.Decimal, error) {
+func (uc *PlacementUseCase) placementKidsAndPaid(ctx context.Context) (map[uint64][]*Placement, map[uint64]decimal.Decimal, map[uint64]int, error) {
 	rows, err := uc.placements.ListAll(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	kids := map[uint64][]*Placement{}
 	for _, p := range rows {
@@ -583,14 +584,14 @@ func (uc *PlacementUseCase) placementKidsAndPaid(ctx context.Context) (map[uint6
 		}
 		kids[p.SponsorID] = append(kids[p.SponsorID], p)
 	}
-	paid, err := uc.subtreePaidMap(ctx)
+	paid, counts, err := uc.subtreeStats(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return kids, paid, nil
+	return kids, paid, counts, nil
 }
 
-func (uc *PlacementUseCase) attachPlacementChildren(ctx context.Context, node *RecommendNode, kids map[uint64][]*Placement, paid map[uint64]decimal.Decimal, seen map[uint64]struct{}, depth int) error {
+func (uc *PlacementUseCase) attachPlacementChildren(ctx context.Context, node *RecommendNode, kids map[uint64][]*Placement, paid map[uint64]decimal.Decimal, counts map[uint64]int, seen map[uint64]struct{}, depth int) error {
 	if node == nil || depth >= maxDownlineDepth {
 		return nil
 	}
@@ -610,6 +611,7 @@ func (uc *PlacementUseCase) attachPlacementChildren(ctx context.Context, node *R
 			UserID:  p.UserID,
 			Address: u.Address,
 			Amount:  money.Round(paid[p.UserID]),
+			Count:   subtreePeople(counts, p.UserID),
 			Side:    p.Side,
 		}
 		switch p.Side {
@@ -618,7 +620,7 @@ func (uc *PlacementUseCase) attachPlacementChildren(ctx context.Context, node *R
 		case SideRight:
 			node.Right = child
 		}
-		if err := uc.attachPlacementChildren(ctx, child, kids, paid, seen, depth+1); err != nil {
+		if err := uc.attachPlacementChildren(ctx, child, kids, paid, counts, seen, depth+1); err != nil {
 			return err
 		}
 	}
@@ -678,7 +680,7 @@ func (uc *PlacementUseCase) listDirectRecommend(ctx context.Context, sponsorID u
 		}
 		return children[i].Side < children[j].Side
 	})
-	paid, err := uc.subtreePaidMap(ctx)
+	paid, counts, err := uc.subtreeStats(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -695,16 +697,31 @@ func (uc *PlacementUseCase) listDirectRecommend(ctx context.Context, sponsorID u
 			UserID:  c.UserID,
 			Address: u.Address,
 			Amount:  money.Round(paid[c.UserID]),
+			Count:   subtreePeople(counts, c.UserID),
 			Side:    c.Side,
 		})
 	}
 	return out, nil
 }
 
+func subtreePeople(counts map[uint64]int, id uint64) int {
+	if counts != nil {
+		if n := counts[id]; n > 0 {
+			return n
+		}
+	}
+	return 1
+}
+
 func (uc *PlacementUseCase) subtreePaidMap(ctx context.Context) (map[uint64]decimal.Decimal, error) {
+	paid, _, err := uc.subtreeStats(ctx)
+	return paid, err
+}
+
+func (uc *PlacementUseCase) subtreeStats(ctx context.Context) (map[uint64]decimal.Decimal, map[uint64]int, error) {
 	rows, err := uc.placements.ListAll(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	kids := map[uint64][]uint64{}
 	ids := map[uint64]struct{}{}
@@ -718,7 +735,7 @@ func (uc *PlacementUseCase) subtreePaidMap(ctx context.Context) (map[uint64]deci
 	}
 	all, err := uc.users.ListAll(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	paid := map[uint64]decimal.Decimal{}
 	for _, u := range all {
@@ -728,29 +745,34 @@ func (uc *PlacementUseCase) subtreePaidMap(ctx context.Context) (map[uint64]deci
 		paid[u.ID] = money.Round(u.PaidAmount)
 	}
 	memo := map[uint64]decimal.Decimal{}
+	countMemo := map[uint64]int{}
 	visiting := map[uint64]struct{}{}
-	var walk func(uint64) decimal.Decimal
-	walk = func(id uint64) decimal.Decimal {
+	var walk func(uint64) (decimal.Decimal, int)
+	walk = func(id uint64) (decimal.Decimal, int) {
 		if v, ok := memo[id]; ok {
-			return v
+			return v, countMemo[id]
 		}
 		if _, ok := visiting[id]; ok {
-			return paid[id]
+			return paid[id], 1
 		}
 		visiting[id] = struct{}{}
 		sum := paid[id]
+		n := 1
 		for _, kid := range kids[id] {
-			sum = sum.Add(walk(kid))
+			p, c := walk(kid)
+			sum = sum.Add(p)
+			n += c
 		}
 		delete(visiting, id)
 		sum = money.Round(sum)
 		memo[id] = sum
-		return sum
+		countMemo[id] = n
+		return sum, n
 	}
 	for id := range ids {
 		walk(id)
 	}
-	return memo, nil
+	return memo, countMemo, nil
 }
 
 func downlinePerson(u *User) *DownlinePerson {
@@ -871,15 +893,15 @@ func (uc *PlacementUseCase) adminDownline(ctx context.Context, userID uint64, ad
 		}
 		it.Children = kids
 	}
-	kids, paid, err := uc.placementKidsAndPaid(ctx)
+	kids, paid, counts, err := uc.placementKidsAndPaid(ctx)
 	if err != nil {
 		return nil, err
 	}
 	seenPlace := map[uint64]struct{}{id: {}}
-	if err := uc.attachPlacementChildren(ctx, view.Left, kids, paid, seenPlace, 0); err != nil {
+	if err := uc.attachPlacementChildren(ctx, view.Left, kids, paid, counts, seenPlace, 0); err != nil {
 		return nil, err
 	}
-	if err := uc.attachPlacementChildren(ctx, view.Right, kids, paid, seenPlace, 0); err != nil {
+	if err := uc.attachPlacementChildren(ctx, view.Right, kids, paid, counts, seenPlace, 0); err != nil {
 		return nil, err
 	}
 	return view, nil

@@ -113,16 +113,42 @@ func ValueFromUSDTHalf(usdtHalf decimal.Decimal) decimal.Decimal {
 
 // OrderStaticRelease 一笔订单的静态释放进度。
 type OrderStaticRelease struct {
-	TodayUSDT      decimal.Decimal
-	TodayIspay     decimal.Decimal
-	ReleasedUSDT   decimal.Decimal
-	ReleasedIspay  decimal.Decimal
-	PendingUSDT    decimal.Decimal
-	PendingIspay   decimal.Decimal
-	SettleDate     string
+	TodayUSDT     decimal.Decimal
+	TodayIspay    decimal.Decimal
+	ReleasedUSDT  decimal.Decimal
+	ReleasedIspay decimal.Decimal
+	PendingUSDT   decimal.Decimal
+	PendingIspay  decimal.Decimal
+	Coins         decimal.Decimal
+	ReleasedCoins decimal.Decimal
+	PendingCoins  decimal.Decimal
+	SettleDate    string
 }
 
-// ComputeOrderStaticRelease 今日=当日静态释放量；已释放=历史入账；待释放=总产值-已释放产值再对半。
+// OrderCoinProgress 购币口径：已释放天数=账本 static 次数；满档已释放=购币、待释放=0。
+func OrderCoinProgress(amount decimal.Decimal, releaseDays, releasedDays int, paid bool) (coins, released, pending decimal.Decimal) {
+	if !paid || !ValidReleaseDays(releaseDays) {
+		return
+	}
+	coins, dailyCoins, _, _, _, ok := StaticDaily(amount, releaseDays, IspaySpotFallback())
+	if !ok {
+		return
+	}
+	if releasedDays < 0 {
+		releasedDays = 0
+	}
+	if releasedDays >= releaseDays {
+		return coins, coins, decimal.Zero
+	}
+	released = money.Round(dailyCoins.Mul(decimal.NewFromInt(int64(releasedDays))))
+	pending = money.Round(coins.Sub(released))
+	if pending.IsNegative() {
+		return coins, coins, decimal.Zero
+	}
+	return coins, released, pending
+}
+
+// ComputeOrderStaticRelease 今日=当日静态入账；Released/Pending USDT·ISPAY 仍按产值对半（管理端产值用）；Coins 为购币口径。
 func ComputeOrderStaticRelease(o *Order, spot, todayUSDT, todayIspay, releasedUSDT, releasedIspay decimal.Decimal, releasedDays int) OrderStaticRelease {
 	out := OrderStaticRelease{
 		ReleasedUSDT:  money.Round(releasedUSDT),
@@ -131,6 +157,7 @@ func ComputeOrderStaticRelease(o *Order, spot, todayUSDT, todayIspay, releasedUS
 	if o == nil || o.Status != OrderPaid || !ValidReleaseDays(o.ReleaseDays) {
 		return out
 	}
+	out.Coins, out.ReleasedCoins, out.PendingCoins = OrderCoinProgress(o.Amount, o.ReleaseDays, releasedDays, true)
 	spot = money.Round(spot)
 	coins, _, dailyValue, dailyUSDT, dailyIspay, ok := StaticDaily(o.Amount, o.ReleaseDays, spot)
 	if !ok {

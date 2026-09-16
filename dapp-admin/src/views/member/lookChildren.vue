@@ -160,6 +160,11 @@ export default {
             })
             return n
         },
+        placeCount(n) {
+            const c = Number(n && n.count)
+            if (Number.isFinite(c) && c > 0) return String(Math.trunc(c))
+            return '1'
+        },
         toInviteBranch(it) {
             return {
                 key: 'inv-' + it.user_id,
@@ -198,7 +203,8 @@ export default {
                 label,
                 display: this.shortAddr(n.address),
                 fullAddress: n.address,
-                meta: '子树 ' + (n.amount || '0'),
+                metaLeft: '总人数 ' + this.placeCount(n),
+                meta: '业绩 ' + (n.amount || '0'),
                 cls: side === 'L' ? 'left' : 'right',
                 children: kids,
             }
@@ -345,6 +351,10 @@ export default {
     margin-top: 4px;
     font-size: 12px;
     color: #595959;
+    display: flex;
+    justify-content: flex-start;
+    gap: 8px;
+    flex-wrap: wrap;
 }
 .org-kids {
     display: flex;

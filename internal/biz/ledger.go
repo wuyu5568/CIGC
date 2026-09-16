@@ -677,7 +677,7 @@ func (uc *LedgerUseCase) ListUserRewards(ctx context.Context, userID uint64, req
 	}, nil
 }
 
-// UserRewardTotals 用户端资产页：四类 U 入账合计 + 静态释放次数。
+// UserRewardTotals 四类账本半边 U 合计（含冻结）+ 静态释放次数。用户端展示再 ×2 还原产值。
 func (uc *LedgerUseCase) UserRewardTotals(ctx context.Context, userID uint64) (static, direct, match, manage decimal.Decimal, staticTimes int, err error) {
 	if uc == nil || uc.ledger == nil || userID == 0 {
 		return

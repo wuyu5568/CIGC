@@ -30,40 +30,46 @@
         <div class="pledge-info">
           <div class="pledge-item">
             <p>{{ lang('待释放') }}ISPAY</p>
-            <p>{{ userinfo.amountGetSub || 0 }}</p>
+            <p>{{ displayAmount(userinfo.amountGetSub) }}</p>
           </div>
           <div class="pledge-item">
             <p>{{ lang('已释放') }}ISPAY</p>
-            <p>{{ userinfo.amountGet || 0 }}</p>
+            <p>{{ displayAmount(userinfo.amountGet) }}</p>
           </div>
         </div>
         <div class="pledge-info">
           <div class="pledge-item">
             <p>{{ lang('冻结') }} USDT</p>
-            <p>{{ userinfo.lock_balance || userinfo.lockBalance || userinfo.lock || 0 }}</p>
+            <p>{{ displayAmount(userinfo.lock_balance || userinfo.lockBalance || userinfo.lock) }}</p>
+            <p class="hint">{{ lang('到期清零') }}</p>
           </div>
           <div class="pledge-item">
             <p>{{ lang('冻结') }} ISPAY</p>
-            <p>{{ userinfo.lock_ispay || userinfo.lockIspay || 0 }}</p>
+            <p>{{ displayAmount(userinfo.lock_ispay || userinfo.lockIspay) }}</p>
+            <p class="hint">{{ lang('到期清零') }}</p>
           </div>
         </div>
       </div>
       <div class="pledge-frame">
         <div class="pledge-frame-item">
           <p>{{ lang('直推收益') }}</p>
-          <p>{{ userinfo.recommend || 0 }}</p>
+          <p>{{ displayAmount(userinfo.recommend) }} USDT</p>
+          <p class="hint">{{ lang('累计产值，含冻结') }}</p>
         </div>
         <div class="pledge-frame-item">
           <p>{{ lang('对碰收益') }}</p>
-          <p>{{ userinfo.recommendTwo || 0 }}</p>
+          <p>{{ displayAmount(userinfo.recommendTwo) }} USDT</p>
+          <p class="hint">{{ lang('累计产值，含冻结') }}</p>
         </div>
         <div class="pledge-frame-item">
           <p>{{ lang('管理收益') }}</p>
-          <p>{{ userinfo.team || 0 }}</p>
+          <p>{{ displayAmount(userinfo.team) }} USDT</p>
+          <p class="hint">{{ lang('累计产值，含冻结') }}</p>
         </div>
         <div class="pledge-frame-item">
           <p>{{ lang('全部收益') }}</p>
-          <p>{{ allIncome }}</p>
+          <p>{{ allIncome }} USDT</p>
+          <p class="hint">{{ lang('累计产值，含冻结') }}</p>
         </div>
       </div>
       <van-tabs v-model:active="active" :ellipsis="false" @click-tab="onClickTab">
@@ -82,8 +88,9 @@
                     <p class="title">{{ item.goods || item.title || '-' }}</p>
                     <p class="sub">{{ item.release_days || '-' }} {{ lang('天') }}</p>
                     <p class="date">{{ lang('购买日期') }}：{{ item.purchase_date || item.paid_at || item.createdAt || item.created_at || '-' }}</p>
-                    <p class="sub">{{ lang('已释放') }} {{ displayAmount(item.released_usdt) }} USDT / {{ displayAmount(item.released_ispay) }} ISPAY</p>
-                    <p class="sub">{{ lang('待释放') }} {{ displayAmount(item.pending_usdt) }} USDT / {{ displayAmount(item.pending_ispay) }} ISPAY</p>
+                    <p class="sub">{{ lang('购币') }} {{ displayAmount(item.coins) }} ISPAY</p>
+                    <p class="sub">{{ lang('已释放') }} {{ displayAmount(item.released_coins || item.released_ispay) }} ISPAY</p>
+                    <p class="sub">{{ lang('待释放') }} {{ displayAmount(item.pending_coins || item.pending_ispay) }} ISPAY</p>
                   </template>
                   <template v-else>
                     <p class="title">{{ rowTitle(item) }}</p>
@@ -247,6 +254,12 @@ const clearMoneyLine = (item) => {
   return parts.join(' · ')
 }
 
+const placeCount = (n) => {
+  const c = Number(n?.count)
+  if (Number.isFinite(c) && c > 0) return String(Math.trunc(c))
+  return '1'
+}
+
 const toInviteBranch = (it) => {
   return {
     key: 'inv-' + (it.user_id || it.address),
@@ -279,7 +292,8 @@ const toPlaceBranch = (n, side, parentKey) => {
     label,
     display: shortAddr(n.address),
     fullAddress: n.address,
-    meta: (n.amount || n.paid || '0'),
+    metaLeft: lang('总人数') + ' ' + placeCount(n),
+    meta: lang('业绩') + ' ' + (n.amount || n.paid || '0'),
     cls: side === 'L' ? 'left' : 'right',
     children: [],
   }
@@ -526,6 +540,12 @@ const handleBack = () => {
                 font-weight: 500;
                 font-size: 18px;
               }
+              &.hint {
+                font-size: 11px;
+                font-weight: 400;
+                color: rgba(255, 255, 255, 0.45);
+                line-height: 1.2;
+              }
             }
           }
         }
@@ -563,11 +583,17 @@ const handleBack = () => {
           align-items: center;
           justify-content: center;
           flex-direction: column;
-          gap: 10px;
+          gap: 6px;
           p {
             &:nth-child(2) {
               font-size: 18px;
               font-weight: 500;
+            }
+            &.hint {
+              font-size: 11px;
+              font-weight: 400;
+              color: rgba(255, 255, 255, 0.55);
+              line-height: 1.2;
             }
           }
         }

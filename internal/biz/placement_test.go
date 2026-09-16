@@ -465,11 +465,11 @@ func TestListRecommend_SubtreePaidAndScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(nodes) != 2 || nodes[0].Address != "0xb" || !nodes[0].Amount.Equal(decimal.RequireFromString("500")) {
+	if len(nodes) != 2 || nodes[0].Address != "0xb" || !nodes[0].Amount.Equal(decimal.RequireFromString("500")) || nodes[0].Count != 2 {
 		t.Fatalf("A children=%+v", nodes)
 	}
-	if nodes[1].Address != "0xc" || !nodes[1].Amount.Equal(decimal.RequireFromString("50")) {
-		t.Fatalf("C amount=%s", nodes[1].Amount)
+	if nodes[1].Address != "0xc" || !nodes[1].Amount.Equal(decimal.RequireFromString("50")) || nodes[1].Count != 1 {
+		t.Fatalf("C amount=%s count=%d", nodes[1].Amount, nodes[1].Count)
 	}
 
 	underB, err := uc.ListRecommend(context.Background(), a.ID, "0xb")

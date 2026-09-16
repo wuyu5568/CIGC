@@ -51,6 +51,31 @@ func TestReleaseBuyPrice(t *testing.T) {
 	}
 }
 
+func TestOrderCoinProgress(t *testing.T) {
+	coins, released, pending := OrderCoinProgress(decimal.RequireFromString("12000"), 300, 0, true)
+	if !coins.Equal(decimal.RequireFromString("10")) || !released.IsZero() || !pending.Equal(coins) {
+		t.Fatalf("fresh coins=%s released=%s pending=%s", coins, released, pending)
+	}
+	coins, released, pending = OrderCoinProgress(decimal.RequireFromString("12000"), 300, 1, true)
+	if !released.Equal(decimal.RequireFromString("0.03333333")) {
+		t.Fatalf("day1 released=%s", released)
+	}
+	if !pending.Equal(decimal.RequireFromString("9.96666667")) {
+		t.Fatalf("day1 pending=%s", pending)
+	}
+	if !coins.Sub(released).Equal(pending) {
+		t.Fatalf("day1 coins != released+pending")
+	}
+	coins, released, pending = OrderCoinProgress(decimal.RequireFromString("12000"), 300, 300, true)
+	if !released.Equal(coins) || !pending.IsZero() {
+		t.Fatalf("full released=%s pending=%s coins=%s", released, pending, coins)
+	}
+	coins, released, pending = OrderCoinProgress(decimal.RequireFromString("12000"), 300, 1, false)
+	if !coins.IsZero() || !released.IsZero() || !pending.IsZero() {
+		t.Fatalf("unpaid should be 0: %s %s %s", coins, released, pending)
+	}
+}
+
 func TestComputeOrderStaticRelease_NoHistory(t *testing.T) {
 	spot := decimal.RequireFromString("2000")
 	o := &Order{Status: OrderPaid, Amount: decimal.RequireFromString("12000"), ReleaseDays: 300}
@@ -63,6 +88,9 @@ func TestComputeOrderStaticRelease_NoHistory(t *testing.T) {
 	}
 	if !r.PendingUSDT.Equal(decimal.RequireFromString("10000")) || !r.PendingIspay.Equal(decimal.RequireFromString("5")) {
 		t.Fatalf("pending usdt=%s ispay=%s", r.PendingUSDT, r.PendingIspay)
+	}
+	if !r.Coins.Equal(decimal.RequireFromString("10")) || !r.ReleasedCoins.IsZero() || !r.PendingCoins.Equal(decimal.RequireFromString("10")) {
+		t.Fatalf("coins=%s released=%s pending=%s", r.Coins, r.ReleasedCoins, r.PendingCoins)
 	}
 }
 
@@ -84,6 +112,9 @@ func TestComputeOrderStaticRelease_OneDayReleased(t *testing.T) {
 	if !r.PendingUSDT.Equal(wantU) || !r.PendingIspay.Equal(wantI) {
 		t.Fatalf("pending usdt=%s/%s ispay=%s/%s", r.PendingUSDT, wantU, r.PendingIspay, wantI)
 	}
+	if !r.ReleasedCoins.Equal(decimal.RequireFromString("0.03333333")) || !r.PendingCoins.Equal(decimal.RequireFromString("9.96666667")) {
+		t.Fatalf("coin released=%s pending=%s", r.ReleasedCoins, r.PendingCoins)
+	}
 }
 
 func TestComputeOrderStaticRelease_Finished(t *testing.T) {
@@ -95,6 +126,9 @@ func TestComputeOrderStaticRelease_Finished(t *testing.T) {
 	}
 	if !r.PendingUSDT.IsZero() || !r.PendingIspay.IsZero() {
 		t.Fatalf("pending should be 0: %s %s", r.PendingUSDT, r.PendingIspay)
+	}
+	if !r.ReleasedCoins.Equal(decimal.RequireFromString("10")) || !r.PendingCoins.IsZero() {
+		t.Fatalf("full coins released=%s pending=%s", r.ReleasedCoins, r.PendingCoins)
 	}
 }
 

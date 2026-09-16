@@ -8,7 +8,10 @@
     >
       <div v-if="node.label" class="org-tag">{{ node.label }}</div>
       <div class="org-addr">{{ node.display }}</div>
-      <div v-if="node.meta" class="org-meta">{{ node.meta }}</div>
+      <div v-if="node.metaLeft || node.meta" class="org-meta">
+        <span v-if="node.metaLeft">{{ node.metaLeft }}</span>
+        <span v-if="node.meta">{{ node.meta }}</span>
+      </div>
     </div>
     <div v-if="node.children && node.children.length" class="org-kids">
       <div class="org-stem" />
@@ -110,6 +113,10 @@ export default {
   margin-top: 4px;
   font-size: 11px;
   color: #c5ccd3;
+  display: flex;
+  justify-content: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 .org-kids {
   display: flex;

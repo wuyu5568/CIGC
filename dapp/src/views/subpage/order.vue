@@ -22,12 +22,11 @@
             <div class="order-release">
               <p>{{ lang('购买日期') }}：{{ item.purchase_date || item.paid_at || item.createdAt || item.created_at || '-' }}</p>
               <p>{{ lang('结算日期') }}：{{ item.settle_date || '-' }}</p>
+              <p>{{ lang('购币') }}：{{ displayAmount(item.coins) }} ISPAY</p>
+              <p>{{ lang('已释放') }}：{{ displayAmount(item.released_coins || item.released_ispay) }} ISPAY</p>
+              <p>{{ lang('待释放') }}：{{ displayAmount(item.pending_coins || item.pending_ispay) }} ISPAY</p>
               <p>{{ lang('今日释放 USDT') }}：{{ displayAmount(item.today_usdt) }}</p>
               <p>{{ lang('今日释放 ispay') }}：{{ displayAmount(item.today_ispay) }}</p>
-              <p>{{ lang('已释放 USDT') }}：{{ displayAmount(item.released_usdt) }}</p>
-              <p>{{ lang('已释放 ispay') }}：{{ displayAmount(item.released_ispay) }}</p>
-              <p>{{ lang('待释放 USDT') }}：{{ displayAmount(item.pending_usdt) }}</p>
-              <p>{{ lang('待释放 ispay') }}：{{ displayAmount(item.pending_ispay) }}</p>
             </div>
           </div>
         </div>
