@@ -9,6 +9,7 @@ import (
 	"github.com/cigc/app/internal/biz"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type packageRepo struct{ data *Data }
@@ -30,6 +31,52 @@ func toBizPackage(m *PackageModel) *biz.Package {
 	}
 }
 
+func (r *packageRepo) attachContents(ctx context.Context, packages []*biz.Package) error {
+	ids := make([]uint64, 0, len(packages))
+	byID := make(map[uint64]*biz.Package, len(packages))
+	for _, p := range packages {
+		if p != nil {
+			ids = append(ids, p.ID)
+			byID[p.ID] = p
+			p.Contents = map[string]biz.PackageContent{}
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	var rows []PackageContentModel
+	if err := r.data.Session(ctx).Where("package_id IN ? AND locale IN ?", ids, []string{"zh", "en"}).Find(&rows).Error; err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if p := byID[row.PackageID]; p != nil {
+			p.Contents[row.Locale] = biz.PackageContent{
+				Title: row.Title, GoodsDesc: row.GoodsDesc, Image: row.Image, Detail: row.Detail,
+			}
+		}
+	}
+	return nil
+}
+
+func (r *packageRepo) saveContents(ctx context.Context, packageID uint64, contents map[string]biz.PackageContent) error {
+	for locale, content := range contents {
+		if locale != "zh" && locale != "en" {
+			continue
+		}
+		row := PackageContentModel{
+			PackageID: packageID, Locale: locale, Title: content.Title,
+			GoodsDesc: content.GoodsDesc, Image: content.Image, Detail: content.Detail,
+		}
+		if err := r.data.Session(ctx).Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "package_id"}, {Name: "locale"}},
+			DoUpdates: clause.AssignmentColumns([]string{"title", "goods_desc", "image", "detail", "updated_at"}),
+		}).Create(&row).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (r *packageRepo) ListEnabled(ctx context.Context) ([]*biz.Package, error) {
 	var rows []PackageModel
 	if err := r.data.db.WithContext(ctx).
@@ -41,6 +88,9 @@ func (r *packageRepo) ListEnabled(ctx context.Context) ([]*biz.Package, error) {
 	out := make([]*biz.Package, len(rows))
 	for i := range rows {
 		out[i] = toBizPackage(&rows[i])
+	}
+	if err := r.attachContents(ctx, out); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -56,6 +106,9 @@ func (r *packageRepo) ListAll(ctx context.Context) ([]*biz.Package, error) {
 	for i := range rows {
 		out[i] = toBizPackage(&rows[i])
 	}
+	if err := r.attachContents(ctx, out); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
@@ -70,7 +123,11 @@ func (r *packageRepo) FindByAmount(ctx context.Context, amount decimal.Decimal, 
 		}
 		return nil, err
 	}
-	return toBizPackage(&m), nil
+	p := toBizPackage(&m)
+	if err := r.attachContents(ctx, []*biz.Package{p}); err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 func (r *packageRepo) FindByID(ctx context.Context, id uint64) (*biz.Package, error) {
@@ -81,32 +138,36 @@ func (r *packageRepo) FindByID(ctx context.Context, id uint64) (*biz.Package, er
 		}
 		return nil, err
 	}
-	return toBizPackage(&m), nil
+	p := toBizPackage(&m)
+	if err := r.attachContents(ctx, []*biz.Package{p}); err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 func (r *packageRepo) Update(ctx context.Context, p *biz.Package) (*biz.Package, error) {
 	if p == nil || p.ID == 0 {
 		return nil, biz.ErrPackageNotFound
 	}
-	res := r.data.Session(ctx).Model(&PackageModel{}).Where("id = ?", p.ID).Updates(map[string]any{
-		"amount":       p.Amount,
-		"title":        p.Title,
-		"goods_desc":   p.GoodsDesc,
-		"daily_cap":    p.DailyCap,
-		"release_days": p.ReleaseDays,
-		"sort_order":   p.SortOrder,
-		"enabled":      p.Enabled,
-		"image":        p.Image,
-		"detail":       p.Detail,
+	err := r.data.InTx(ctx, func(txCtx context.Context) error {
+		res := r.data.Session(txCtx).Model(&PackageModel{}).Where("id = ?", p.ID).Updates(map[string]any{
+			"amount": p.Amount, "title": p.Title, "goods_desc": p.GoodsDesc,
+			"daily_cap": p.DailyCap, "release_days": p.ReleaseDays, "sort_order": p.SortOrder,
+			"enabled": p.Enabled, "image": p.Image, "detail": p.Detail,
+		})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return biz.ErrPackageNotFound
+		}
+		return r.saveContents(txCtx, p.ID, p.Contents)
 	})
-	if res.Error != nil {
-		if isDuplicateKey(res.Error) {
+	if err != nil {
+		if isDuplicateKey(err) {
 			return nil, biz.ErrPackageAmountTaken
 		}
-		return nil, res.Error
-	}
-	if res.RowsAffected == 0 {
-		return nil, biz.ErrPackageNotFound
+		return nil, err
 	}
 	return r.FindByID(ctx, p.ID)
 }
@@ -123,13 +184,18 @@ func (r *packageRepo) Create(ctx context.Context, p *biz.Package) (*biz.Package,
 		Image:       p.Image,
 		Detail:      p.Detail,
 	}
-	if err := r.data.Session(ctx).Create(&m).Error; err != nil {
+	if err := r.data.InTx(ctx, func(txCtx context.Context) error {
+		if err := r.data.Session(txCtx).Create(&m).Error; err != nil {
+			return err
+		}
+		return r.saveContents(txCtx, m.ID, p.Contents)
+	}); err != nil {
 		if isDuplicateKey(err) {
 			return nil, biz.ErrPackageAmountTaken
 		}
 		return nil, err
 	}
-	return toBizPackage(&m), nil
+	return r.FindByID(ctx, m.ID)
 }
 
 func (r *packageRepo) Delete(ctx context.Context, id uint64) error {

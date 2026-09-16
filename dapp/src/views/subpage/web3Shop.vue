@@ -66,7 +66,7 @@
       />
     </div>
   </div>
-  <div class="cart-bar" v-if="cartCount > 0">
+  <div class="cart-bar">
     <button type="button" class="cart-icon-btn" @click="cartOpen = true">
       <van-badge :content="cartCount" max="99">
         <van-icon name="shopping-cart-o" />
@@ -188,6 +188,14 @@ const fetchList = async () => {
     if (res && res.status === 'ok') {
       list = Array.isArray(res.list) ? res.list : []
       total = parseInt(res.count || '0', 10) || 0
+      let cartChanged = false
+      cart = cart.map((row) => {
+        const fresh = list.find((item) => Number(item.id) === Number(row.id))
+        if (!fresh) return row
+        cartChanged = true
+        return { ...row, ...snapshotItem(fresh), qty: row.qty }
+      })
+      if (cartChanged) persistCart()
     } else {
       list = []
       total = 0
@@ -529,8 +537,13 @@ loadCapTiers(request).then((rows) => {
     }
     .cart-cap {
       margin-top: 2px;
+      min-height: 32px;
       color: #e0e0e0;
       font-size: 12px;
+      line-height: 16px;
+      span {
+        display: block;
+      }
     }
     .checkout-btn {
       min-width: 108px;

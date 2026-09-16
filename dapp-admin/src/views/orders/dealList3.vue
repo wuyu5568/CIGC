@@ -13,43 +13,59 @@
             centered :closable="false" @cancel="isShowJf = false" :maskClosable="false" width="960px" destroyOnClose
             :bodyStyle="{ maxHeight: '72vh', overflow: 'auto' }">
             <a-form style="margin-top: 20px">
-                <a-form-item label="名称" :label-col="labelCol" :wrapper-col="wrapperCol">
-                    <a-input v-model="name" placeholder="请输入商品名称" />
-                </a-form-item>
-                <a-form-item label="描述" :label-col="labelCol" :wrapper-col="wrapperCol">
-                    <a-textarea v-model="desc" :rows="2" placeholder="请输入商品描述" />
-                </a-form-item>
-                <a-form-item label="主图" :label-col="labelCol" :wrapper-col="wrapperCol">
-                    <div>
-                        <div v-if="imageUrl" class="goods-cover">
-                            <img :src="imageUrl" class="goods-preview" @click="showImage(imageUrl)" />
-                            <a-button type="danger" ghost size="small" @click="clearImage">删除主图</a-button>
-                        </div>
-                        <a-upload
-                            name="file"
-                            :multiple="false"
-                            accept=".jpg,.jpeg,.png,.webp"
-                            :showUploadList="false"
-                            :customRequest="customRequest"
-                        >
-                            <a-button>
-                                <a-icon type="upload" />{{ imageFile ? imageFile.name : (imageUrl ? '重新上传图片' : '上传图片') }}
-                            </a-button>
-                        </a-upload>
-                    </div>
-                </a-form-item>
-                <a-form-item label="详情" :label-col="labelCol" :wrapper-col="wrapperCol">
-                    <a-checkbox :checked="detailEnabled" @change="onDetailEnabled">填写详情</a-checkbox>
-                    <div v-if="detailEnabled" class="detail-editor">
-                        <tinymceForm
-                            editor-id="web3-goods-detail"
-                            :height="360"
-                            :value="detail"
-                            :upload-handler="onDetailImageUpload"
-                            @input="onDetailInput"
-                        />
-                    </div>
-                </a-form-item>
+                <a-tabs v-model="contentTab">
+                    <a-tab-pane key="zh" tab="中文内容">
+                        <a-form-item label="名称" :label-col="labelCol" :wrapper-col="wrapperCol">
+                            <a-input v-model="name" placeholder="请输入中文商品名称" />
+                        </a-form-item>
+                        <a-form-item label="描述" :label-col="labelCol" :wrapper-col="wrapperCol">
+                            <a-textarea v-model="desc" :rows="2" placeholder="请输入中文商品描述" />
+                        </a-form-item>
+                        <a-form-item label="主图" :label-col="labelCol" :wrapper-col="wrapperCol">
+                            <div v-if="imageUrl" class="goods-cover">
+                                <img :src="imageUrl" class="goods-preview" @click="showImage(imageUrl)" />
+                                <a-button type="danger" ghost size="small" @click="clearImage">删除主图</a-button>
+                            </div>
+                            <a-upload name="file" :showUploadList="false" accept=".jpg,.jpeg,.png,.webp" :customRequest="customRequest">
+                                <a-button><a-icon type="upload" />{{ imageFile ? imageFile.name : (imageUrl ? '重新上传图片' : '上传图片') }}</a-button>
+                            </a-upload>
+                        </a-form-item>
+                        <a-form-item label="详情" :label-col="labelCol" :wrapper-col="wrapperCol">
+                            <a-checkbox :checked="detailEnabled" @change="onDetailEnabled">填写详情</a-checkbox>
+                            <div v-if="detailEnabled" class="detail-editor">
+                                <tinymceForm editor-id="web3-goods-detail-zh" :height="360" :value="detail"
+                                    :upload-handler="onDetailImageUpload" @input="onDetailInput" />
+                            </div>
+                        </a-form-item>
+                    </a-tab-pane>
+                    <a-tab-pane key="en" :tab="englishComplete ? 'English Content' : 'English Content（待完善）'">
+                        <a-form-item label="Name" :label-col="labelCol" :wrapper-col="wrapperCol">
+                            <a-input v-model="nameEn" placeholder="Enter product name" />
+                        </a-form-item>
+                        <a-form-item label="Description" :label-col="labelCol" :wrapper-col="wrapperCol">
+                            <a-textarea v-model="descEn" :rows="2" placeholder="Enter product description" />
+                        </a-form-item>
+                        <a-form-item label="Cover" :label-col="labelCol" :wrapper-col="wrapperCol">
+                            <div v-if="imageUrlEn" class="goods-cover">
+                                <img :src="imageUrlEn" class="goods-preview" @click="showImage(imageUrlEn)" />
+                                <a-button type="danger" ghost size="small" @click="clearImageEn">Delete</a-button>
+                            </div>
+                            <div class="content-actions">
+                                <a-upload name="file" :showUploadList="false" accept=".jpg,.jpeg,.png,.webp" :customRequest="customRequestEn">
+                                    <a-button><a-icon type="upload" />{{ imageFileEn ? imageFileEn.name : (imageUrlEn ? 'Replace image' : 'Upload image') }}</a-button>
+                                </a-upload>
+                                <a-button v-if="imageUrl && !imageUrlEn" @click="imageUrlEn = imageUrl">使用中文主图</a-button>
+                            </div>
+                        </a-form-item>
+                        <a-form-item label="Detail" :label-col="labelCol" :wrapper-col="wrapperCol">
+                            <a-checkbox :checked="detailEnabledEn" @change="onDetailEnabledEn">填写英文详情</a-checkbox>
+                            <div v-if="detailEnabledEn" class="detail-editor">
+                                <tinymceForm editor-id="web3-goods-detail-en" :height="360" :value="detailEn"
+                                    :upload-handler="onDetailImageUpload" @input="onDetailInputEn" />
+                            </div>
+                        </a-form-item>
+                    </a-tab-pane>
+                </a-tabs>
                 <a-form-item label="单价" :label-col="labelCol" :wrapper-col="wrapperCol">
                     <a-input-number v-model="amount" :min="1" placeholder="请输入单价" style="width: 100%" />
                     <div class="cap-hint">对应日封顶 {{ capHint }} USDT，金额区间 {{ capRange }}（按结算金额自动套档，档位可在「日封顶档位」页修改）</div>
@@ -149,11 +165,19 @@ export default {
             desc: '',
             detail: '',
             detailEnabled: false,
+            nameEn: '',
+            descEn: '',
+            detailEn: '',
+            detailEnabledEn: false,
+            contentTab: 'zh',
             amount: undefined,
             enabled: true,
             imageFile: null,
             imageUrl: '',
             imageCleared: false,
+            imageFileEn: null,
+            imageUrlEn: '',
+            imageClearedEn: false,
             previewVisible: false,
             previewUrl: '',
             labelCol: {
@@ -180,8 +204,18 @@ export default {
                     },
                 },
                 {
-                    title: '名称',
+                    title: '中文名称',
                     dataIndex: 'name',
+                },
+                {
+                    title: '英文名称',
+                    key: 'name_en',
+                    customRender: (v, row) => (((row.contents || {}).en || {}).title || '--'),
+                },
+                {
+                    title: '英文内容',
+                    dataIndex: 'english_complete',
+                    customRender: (v) => <a-tag color={v ? 'green' : 'orange'}>{v ? '已完善' : '待完善'}</a-tag>,
                 },
                 {
                     title: '描述',
@@ -239,6 +273,9 @@ export default {
         capRange() {
             return rangeForTiers(this.amount, this.capTiers)
         },
+        englishComplete() {
+            return !!(this.nameEn && this.descEn && this.imageUrlEn && hasDetailHtml(this.detailEn))
+        },
     },
     methods: {
         showImage(v) {
@@ -252,11 +289,19 @@ export default {
             this.desc = ''
             this.detail = ''
             this.detailEnabled = false
+            this.nameEn = ''
+            this.descEn = ''
+            this.detailEn = ''
+            this.detailEnabledEn = false
+            this.contentTab = 'zh'
             this.amount = undefined
             this.enabled = true
             this.imageFile = null
             this.imageUrl = ''
             this.imageCleared = false
+            this.imageFileEn = null
+            this.imageUrlEn = ''
+            this.imageClearedEn = false
         },
         openCreate() {
             this.resetForm()
@@ -277,13 +322,20 @@ export default {
             Gai.web3_goods_detail({ id: row.id }).then((res) => {
                 if (res.status && res.status !== 'ok') return
                 const item = res.item || {}
-                if (item.name != null) this.name = item.name
-                if (item.desc != null) this.desc = item.desc
-                this.detail = item.detail != null ? String(item.detail) : ''
+                const zh = (item.contents && item.contents.zh) || item
+                const en = (item.contents && item.contents.en) || {}
+                if (zh.title != null || item.name != null) this.name = zh.title != null ? zh.title : item.name
+                if (zh.desc != null || item.desc != null) this.desc = zh.desc != null ? zh.desc : item.desc
+                this.detail = zh.detail != null ? String(zh.detail) : (item.detail != null ? String(item.detail) : '')
                 this.detailEnabled = hasDetailHtml(this.detail) || item.has_detail === true || item.has_detail === 1 || item.has_detail === '1'
+                this.nameEn = en.title || ''
+                this.descEn = en.desc || ''
+                this.detailEn = en.detail || ''
+                this.detailEnabledEn = hasDetailHtml(this.detailEn)
                 if (item.amount != null) this.amount = Number(item.amount)
                 this.enabled = isOnSale(item)
-                if (item.image != null) this.imageUrl = item.image || ''
+                if (zh.image != null || item.image != null) this.imageUrl = zh.image || item.image || ''
+                this.imageUrlEn = en.image || ''
             })
         },
         clearImage() {
@@ -291,11 +343,22 @@ export default {
             this.imageUrl = ''
             this.imageCleared = true
         },
+        clearImageEn() {
+            this.imageFileEn = null
+            this.imageUrlEn = ''
+            this.imageClearedEn = true
+        },
         onDetailEnabled(e) {
             this.detailEnabled = !!(e && e.target && e.target.checked)
         },
         onDetailInput(v) {
             this.detail = v == null ? '' : String(v)
+        },
+        onDetailEnabledEn(e) {
+            this.detailEnabledEn = !!(e && e.target && e.target.checked)
+        },
+        onDetailInputEn(v) {
+            this.detailEn = v == null ? '' : String(v)
         },
         onDetailImageUpload(blobInfo, success, failure) {
             const blob = blobInfo && blobInfo.blob ? blobInfo.blob() : null
@@ -337,6 +400,19 @@ export default {
             this.imageCleared = false
             if (info.onSuccess) info.onSuccess()
         },
+        customRequestEn(info) {
+            const file = info.file
+            const okType = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'].includes(file.type)
+            if (!okType || file.size > 5 * 1024 * 1024) {
+                this.$message.info(!okType ? '图片格式不支持' : '图片不能超过5MB')
+                if (info.onError) info.onError()
+                return
+            }
+            this.imageFileEn = file
+            this.imageUrlEn = URL.createObjectURL(file)
+            this.imageClearedEn = false
+            if (info.onSuccess) info.onSuccess()
+        },
         uploadImage() {
             if (!this.imageFile) return Promise.resolve(this.editId ? '' : this.imageUrl)
             const formData = new FormData()
@@ -351,13 +427,38 @@ export default {
                 return res.url
             })
         },
-        payload(image) {
+        uploadImageEn() {
+            if (!this.imageFileEn) return Promise.resolve(this.imageUrlEn)
+            const formData = new FormData()
+            formData.append('file', this.imageFileEn)
+            return Gai.web3_goods_image_upload(formData).then((res) => {
+                if (!res || (res.status && res.status !== 'ok') || !res.url) {
+                    return Promise.reject(new Error((res && res.status) || '英文主图上传失败'))
+                }
+                return res.url
+            })
+        },
+        payload(image, imageEn) {
             const data = {
                 name: this.name,
                 desc: this.desc,
                 detail: this.detailEnabled ? this.detail : '',
                 amount: this.amount,
                 on_sale: this.enabled ? 1 : 0,
+                contents: {
+                    zh: {
+                        title: this.name,
+                        desc: this.desc,
+                        image: this.imageCleared ? '' : (image || this.imageUrl),
+                        detail: this.detailEnabled ? this.detail : '',
+                    },
+                    en: {
+                        title: this.nameEn,
+                        desc: this.descEn,
+                        image: this.imageClearedEn ? '' : (imageEn || this.imageUrlEn),
+                        detail: this.detailEnabledEn ? this.detailEn : '',
+                    },
+                },
             }
             if (this.editId) data.id = this.editId
             if (this.imageCleared) data.image = ''
@@ -367,8 +468,8 @@ export default {
         handleSave() {
             if (!this.amount) return this.$message.info('请输入单价')
             this.confirmLoading = true
-            this.uploadImage().then((image) => {
-                const req = this.editId ? Gai.web3_goods_update(this.payload(image)) : Gai.web3_goods_create(this.payload(image))
+            Promise.all([this.uploadImage(), this.uploadImageEn()]).then(([image, imageEn]) => {
+                const req = this.editId ? Gai.web3_goods_update(this.payload(image, imageEn)) : Gai.web3_goods_create(this.payload(image, imageEn))
                 return req.then((res) => {
                     if (res.status && res.status !== 'ok') {
                         this.$message.error(res.status)
@@ -466,6 +567,11 @@ export default {
     align-items: flex-end;
     gap: 12px;
     margin-bottom: 8px;
+}
+.content-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 .goods-preview {
     display: block;

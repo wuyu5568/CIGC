@@ -120,6 +120,20 @@ type PackageModel struct {
 
 func (PackageModel) TableName() string { return "packages" }
 
+type PackageContentModel struct {
+	ID        uint64 `gorm:"primaryKey"`
+	PackageID uint64 `gorm:"column:package_id;uniqueIndex:uk_package_contents_locale"`
+	Locale    string `gorm:"size:10;uniqueIndex:uk_package_contents_locale"`
+	Title     string `gorm:"size:128"`
+	GoodsDesc string `gorm:"column:goods_desc;size:512"`
+	Image     string `gorm:"size:512"`
+	Detail    string `gorm:"type:mediumtext"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+func (PackageContentModel) TableName() string { return "package_contents" }
+
 type OrderModel struct {
 	ID            uint64 `gorm:"primaryKey"`
 	OrderNo       string `gorm:"column:order_no;size:32"`

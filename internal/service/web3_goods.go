@@ -39,24 +39,76 @@ func (s *AppService) web3GoodsJSON(r *http.Request, p *biz.Package, withDetail b
 	if p.Enabled {
 		onSale = 1
 	}
-	name := strings.TrimSpace(p.Title)
+	locale := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("lang")))
+	if locale != "en" {
+		locale = "zh"
+	}
+	zh := biz.PackageContent{Title: p.Title, GoodsDesc: p.GoodsDesc, Image: p.Image, Detail: p.Detail}
+	if content, ok := p.Contents["zh"]; ok {
+		zh = content
+	}
+	selected := zh
+	if locale == "en" {
+		if content, ok := p.Contents["en"]; ok {
+			if strings.TrimSpace(content.Title) != "" {
+				selected.Title = content.Title
+			}
+			if strings.TrimSpace(content.GoodsDesc) != "" {
+				selected.GoodsDesc = content.GoodsDesc
+			}
+			if strings.TrimSpace(content.Image) != "" {
+				selected.Image = content.Image
+			}
+			if strings.TrimSpace(content.Detail) != "" {
+				selected.Detail = content.Detail
+			}
+		}
+	}
+	name := strings.TrimSpace(selected.Title)
 	if name == "" {
-		name = p.GoodsDesc
+		name = selected.GoodsDesc
 	}
 	out := map[string]any{
 		"id":         p.ID,
 		"name":       name,
-		"desc":       p.GoodsDesc,
+		"desc":       selected.GoodsDesc,
 		"amount":     decStr(p.Amount),
 		"daily_cap":  decStr(biz.CapForAmount(p.Amount)),
 		"days":       days,
 		"sort":       p.SortOrder,
 		"on_sale":    onSale,
-		"image":      upload.AbsoluteURL(upload.PublicBaseURL(r), p.Image),
-		"has_detail": strings.TrimSpace(p.Detail) != "",
+		"image":      upload.AbsoluteURL(upload.PublicBaseURL(r), selected.Image),
+		"has_detail": strings.TrimSpace(selected.Detail) != "",
 	}
 	if withDetail {
-		out["detail"] = sanitize.HTML(p.Detail)
+		out["detail"] = sanitize.HTML(selected.Detail)
+	}
+	if !auth.IsUser(r.Context()) {
+		contents := map[string]any{}
+		englishComplete := false
+		for _, code := range []string{"zh", "en"} {
+			content, ok := p.Contents[code]
+			if !ok && code == "zh" {
+				content = zh
+			}
+			entry := map[string]any{
+				"title": content.Title,
+				"desc":  content.GoodsDesc,
+				"image": upload.AbsoluteURL(upload.PublicBaseURL(r), content.Image),
+			}
+			if withDetail {
+				entry["detail"] = sanitize.HTML(content.Detail)
+			}
+			if code == "en" {
+				englishComplete = strings.TrimSpace(content.Title) != "" &&
+					strings.TrimSpace(content.GoodsDesc) != "" &&
+					strings.TrimSpace(content.Image) != "" &&
+					strings.TrimSpace(content.Detail) != ""
+			}
+			contents[code] = entry
+		}
+		out["contents"] = contents
+		out["english_complete"] = englishComplete
 	}
 	return out
 }
@@ -299,6 +351,12 @@ func readWeb3GoodsReq(r *http.Request) (*web3GoodsReq, error) {
 			OnSale   json.RawMessage `json:"on_sale"`
 			Image    json.RawMessage `json:"image"`
 			Detail   json.RawMessage `json:"detail"`
+			Contents map[string]struct {
+				Title  string `json:"title"`
+				Desc   string `json:"desc"`
+				Image  string `json:"image"`
+				Detail string `json:"detail"`
+			} `json:"contents"`
 		}
 		if err := decodeJSON(r, &body); err != nil {
 			return nil, err
@@ -306,6 +364,20 @@ func readWeb3GoodsReq(r *http.Request) (*web3GoodsReq, error) {
 		in.ID, _ = strconv.ParseUint(strings.Trim(string(body.ID), `"`), 10, 64)
 		in.Name = firstNonEmpty(body.Name, body.Title)
 		in.Desc = firstNonEmpty(body.Desc, body.Goods)
+		if len(body.Contents) > 0 {
+			in.Contents = make(map[string]biz.PackageContent, len(body.Contents))
+			for locale, content := range body.Contents {
+				in.Contents[strings.ToLower(strings.TrimSpace(locale))] = biz.PackageContent{
+					Title: content.Title, GoodsDesc: content.Desc,
+					Image: upload.NormalizeStored(content.Image), Detail: content.Detail,
+				}
+			}
+			if zh, ok := in.Contents["zh"]; ok {
+				in.Name, in.Desc = zh.Title, zh.GoodsDesc
+				in.Image, in.Detail = zh.Image, zh.Detail
+				in.HasImage, in.HasDetail = true, true
+			}
+		}
 		if days := strings.Trim(string(body.Days), `"`); days != "" && days != "null" {
 			in.hasDays = true
 			if n, err := parseReleaseDays(days); err == nil {

@@ -34,6 +34,14 @@ type Package struct {
 	Enabled     bool
 	Image       string
 	Detail      string
+	Contents    map[string]PackageContent
+}
+
+type PackageContent struct {
+	Title     string
+	GoodsDesc string
+	Image     string
+	Detail    string
 }
 
 // Order 是套餐购买单。仅 paid 计入 paid_amount。
@@ -384,6 +392,7 @@ type Web3GoodsInput struct {
 	HasOnSale   bool
 	HasImage    bool
 	HasDetail   bool
+	Contents    map[string]PackageContent
 }
 
 func paginateWeb3Goods(page, pageSize int) (int, int) {
@@ -432,6 +441,20 @@ func normalizeWeb3Goods(in *Web3GoodsInput, create bool) error {
 		}
 		in.Detail = sanitize.HTML(in.Detail)
 		in.HasDetail = true
+	}
+	for locale, content := range in.Contents {
+		if locale != "zh" && locale != "en" {
+			delete(in.Contents, locale)
+			continue
+		}
+		content.Title = strings.TrimSpace(content.Title)
+		content.GoodsDesc = strings.TrimSpace(content.GoodsDesc)
+		content.Image = strings.TrimSpace(content.Image)
+		if len(content.Detail) > MaxWeb3GoodsDetailBytes {
+			return ErrPackageDetail
+		}
+		content.Detail = sanitize.HTML(content.Detail)
+		in.Contents[locale] = content
 	}
 	return nil
 }
@@ -483,17 +506,28 @@ func (uc *OrderUseCase) GetWeb3Goods(ctx context.Context, id uint64, onSaleOnly 
 }
 
 func (in *Web3GoodsInput) toPackage(id uint64, image, detail string) *Package {
+	contents := make(map[string]PackageContent, len(in.Contents)+1)
+	for locale, content := range in.Contents {
+		contents[locale] = content
+	}
+	if _, ok := contents["zh"]; !ok {
+		contents["zh"] = PackageContent{
+			Title: in.Name, GoodsDesc: in.Desc, Image: image, Detail: detail,
+		}
+	}
+	zh := contents["zh"]
 	return &Package{
 		ID:          id,
 		Amount:      in.Amount,
-		Title:       in.Name,
-		GoodsDesc:   in.Desc,
+		Title:       zh.Title,
+		GoodsDesc:   zh.GoodsDesc,
 		DailyCap:    in.DailyCap,
 		ReleaseDays: in.Days,
 		SortOrder:   in.Sort,
 		Enabled:     in.OnSale,
-		Image:       image,
-		Detail:      detail,
+		Image:       zh.Image,
+		Detail:      zh.Detail,
+		Contents:    contents,
 	}
 }
 
@@ -531,7 +565,16 @@ func (uc *OrderUseCase) UpdateWeb3Goods(ctx context.Context, in *Web3GoodsInput)
 	if in.HasDetail {
 		detail = in.Detail
 	}
-	return uc.packages.Update(ctx, in.toPackage(cur.ID, image, detail))
+	next := in.toPackage(cur.ID, image, detail)
+	if next.Contents == nil {
+		next.Contents = map[string]PackageContent{}
+	}
+	for locale, content := range cur.Contents {
+		if _, supplied := in.Contents[locale]; !supplied {
+			next.Contents[locale] = content
+		}
+	}
+	return uc.packages.Update(ctx, next)
 }
 
 // SetWeb3GoodsOnSale 上架/下架。

@@ -10,6 +10,8 @@ const instance = axios.create({
 // 请求拦截
 instance.interceptors.request.use((config: any) => {
     let token = localStorage.getItem("token")
+    const locale = localStorage.getItem("lan") === "en" ? "en" : "zh"
+    config.params = { ...(config.params || {}), lang: config.params?.lang || locale }
     if (token) {
         config.headers['Authorization'] = `Bearer ${token}`;
     }

@@ -61,6 +61,21 @@ CREATE TABLE IF NOT EXISTS packages (
     KEY idx_packages_sort (sort_order, id)
 ) ENGINE=InnoDB DEFAULT CHARSET utf8mb4;
 
+CREATE TABLE IF NOT EXISTS package_contents (
+    id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    package_id  BIGINT UNSIGNED NOT NULL,
+    locale      VARCHAR(10)     NOT NULL,
+    title       VARCHAR(128)    NOT NULL DEFAULT '',
+    goods_desc  VARCHAR(512)    NOT NULL DEFAULT '',
+    image       VARCHAR(512)    NOT NULL DEFAULT '',
+    detail      MEDIUMTEXT,
+    created_at  DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at  DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    UNIQUE KEY uk_package_contents_locale (package_id, locale),
+    KEY idx_package_contents_locale (locale),
+    CONSTRAINT fk_package_contents_package FOREIGN KEY (package_id) REFERENCES packages (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET utf8mb4;
+
 INSERT INTO packages (amount, title, goods_desc, daily_cap, sort_order, enabled)
 SELECT v.amount, v.title, v.goods_desc, v.daily_cap, v.sort_order, v.enabled
 FROM (
@@ -76,6 +91,15 @@ FROM (
     UNION ALL SELECT 160000, '160,000 组合', '分布式存储芯片挖矿＋手机挖矿＋黄金钻石项链＋多肽', 100000, 100, 1
 ) v
 WHERE NOT EXISTS (SELECT 1 FROM packages LIMIT 1);
+
+INSERT INTO package_contents (package_id, locale, title, goods_desc, image, detail)
+SELECT id, 'zh', title, goods_desc, image, detail
+FROM packages
+ON DUPLICATE KEY UPDATE
+    title = VALUES(title),
+    goods_desc = VALUES(goods_desc),
+    image = VALUES(image),
+    detail = VALUES(detail);
 
 CREATE TABLE IF NOT EXISTS orders (
     id              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
