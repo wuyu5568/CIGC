@@ -80,6 +80,29 @@
                     <a-input-number v-model="amount" :min="1" placeholder="请输入单价" style="width: 100%" />
                     <div class="cap-hint">对应日封顶 {{ capHint }} USDT，金额区间 {{ capRange }}（按结算金额自动套档，档位可在「日封顶档位」页修改）</div>
                 </a-form-item>
+                <a-form-item label="规格 SKU" :label-col="labelCol" :wrapper-col="wrapperCol">
+                    <div v-for="(sku, i) in skus" :key="sku._key || i" class="sku-card">
+                        <div class="sku-cover">
+                            <img v-if="sku.imageUrl" :src="sku.imageUrl" class="sku-preview" @click="showImage(sku.imageUrl)" />
+                            <div v-else class="sku-cover-empty">规格图</div>
+                            <a-upload name="file" :showUploadList="false" accept=".jpg,.jpeg,.png,.webp" :customRequest="(info) => customRequestSku(info, i)">
+                                <a-button size="small"><a-icon type="upload" />{{ sku.imageUrl ? '换图' : '上传图片' }}</a-button>
+                            </a-upload>
+                            <a-button v-if="sku.imageUrl" type="danger" ghost size="small" @click="clearSkuImage(i)">删除图片</a-button>
+                        </div>
+                        <div class="sku-fields">
+                            <a-input v-model="sku.name" placeholder="中文规格名" />
+                            <a-input v-model="sku.name_en" placeholder="English name" />
+                            <div class="sku-price-row">
+                                <a-input-number v-model="sku.amount" :min="1" placeholder="规格单价" style="width: 140px" />
+                                <a-switch v-model="sku.enabled" checked-children="启用" un-checked-children="停用" />
+                                <a-button type="link" @click="removeSku(i)">删除规格</a-button>
+                            </div>
+                        </div>
+                    </div>
+                    <a-button type="dashed" icon="plus" @click="addSku" :disabled="skus.length >= 20">添加规格</a-button>
+                    <div class="cap-hint">不添加规格时按上方单价购买；添加后用户必须在详情页选择规格，结算按规格单价，主图随所选规格切换。</div>
+                </a-form-item>
                 <a-form-item label="上架" :label-col="labelCol" :wrapper-col="wrapperCol">
                     <a-switch v-model="enabled" />
                 </a-form-item>
@@ -163,6 +186,31 @@ const rangeForTiers = (amount, tiers) => {
 
 const capForAmount = (amount, tiers) => capForTiers(amount, tiers)
 
+let skuKeySeq = 1
+const emptySku = () => ({
+    _key: `sku-${Date.now()}-${skuKeySeq++}`,
+    id: 0,
+    name: '',
+    name_en: '',
+    amount: undefined,
+    enabled: true,
+    imageUrl: '',
+    imageFile: null,
+    imageCleared: false,
+})
+
+const mapSkuRow = (row) => ({
+    _key: row && row.id ? `sku-${row.id}` : emptySku()._key,
+    id: Number(row && row.id) || 0,
+    name: (row && (row.name_zh || row.name)) || '',
+    name_en: (row && row.name_en) || '',
+    amount: row && row.amount != null && row.amount !== '' ? Number(row.amount) : undefined,
+    enabled: !(row && (row.enabled === 0 || row.enabled === '0' || row.enabled === false)),
+    imageUrl: (row && row.image) || '',
+    imageFile: null,
+    imageCleared: false,
+})
+
 export default {
     name: 'dealList3',
     mixins: [listMixin],
@@ -182,6 +230,7 @@ export default {
             contentTab: 'zh',
             amount: undefined,
             enabled: true,
+            skus: [],
             imageFile: null,
             imageUrl: '',
             imageCleared: false,
@@ -255,6 +304,20 @@ export default {
                     title: '单价',
                     dataIndex: 'amount',
                     customRender: (v) => trimAmount(v),
+                },
+                {
+                    title: '规格',
+                    key: 'skus',
+                    customRender: (v, row) => {
+                        const skus = (row && row.skus) || []
+                        if (!skus.length) return '-'
+                        const names = skus.map((s) => {
+                            const name = (s && (s.name || s.name_zh)) || '-'
+                            return `${name} ${trimAmount(s && s.amount)}`
+                        })
+                        const shown = names.slice(0, 2).join('、')
+                        return names.length > 2 ? `${shown}…（${names.length}）` : shown
+                    },
                 },
                 {
                     title: '日封顶',
@@ -382,6 +445,7 @@ export default {
             this.contentTab = 'zh'
             this.amount = undefined
             this.enabled = true
+            this.skus = []
             this.imageFile = null
             this.imageUrl = ''
             this.imageCleared = false
@@ -401,6 +465,7 @@ export default {
             this.detailEnabled = !!(row.has_detail === true || row.has_detail === 1 || row.has_detail === '1')
             this.amount = Number(row.amount)
             this.enabled = isOnSale(row)
+            this.skus = Array.isArray(row.skus) ? row.skus.map(mapSkuRow) : []
             this.imageFile = null
             this.imageUrl = row.image || ''
             this.imageCleared = false
@@ -422,7 +487,63 @@ export default {
                 this.enabled = isOnSale(item)
                 if (zh.image != null || item.image != null) this.imageUrl = zh.image || item.image || ''
                 this.imageUrlEn = en.image || ''
+                this.skus = Array.isArray(item.skus) ? item.skus.map(mapSkuRow) : []
             })
+        },
+        addSku() {
+            if (this.skus.length >= 20) return
+            const row = emptySku()
+            if (this.amount) row.amount = Number(this.amount)
+            this.skus = this.skus.concat(row)
+        },
+        removeSku(i) {
+            this.skus = this.skus.filter((_, idx) => idx !== i)
+        },
+        customRequestSku(info, i) {
+            const file = info.file
+            const okType = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'].includes(file.type)
+            if (!okType) {
+                this.$message.info('图片格式不支持')
+                if (info.onError) info.onError()
+                return
+            }
+            if (file.size > 5 * 1024 * 1024) {
+                this.$message.info('图片不能超过5MB')
+                if (info.onError) info.onError()
+                return
+            }
+            const row = this.skus[i]
+            if (!row) return
+            this.$set(this.skus, i, {
+                ...row,
+                imageFile: file,
+                imageUrl: URL.createObjectURL(file),
+                imageCleared: false,
+            })
+            if (info.onSuccess) info.onSuccess()
+        },
+        clearSkuImage(i) {
+            const row = this.skus[i]
+            if (!row) return
+            this.$set(this.skus, i, {
+                ...row,
+                imageFile: null,
+                imageUrl: '',
+                imageCleared: true,
+            })
+        },
+        uploadSkuImages() {
+            return Promise.all(this.skus.map((sku, i) => {
+                if (!sku.imageFile) return Promise.resolve()
+                const formData = new FormData()
+                formData.append('file', sku.imageFile)
+                return Gai.web3_goods_image_upload(formData).then((res) => {
+                    if (!res || (res.status && res.status !== 'ok') || !res.url) {
+                        return Promise.reject(new Error((res && res.status) || '规格图片上传失败'))
+                    }
+                    this.$set(this.skus, i, { ...this.skus[i], imageUrl: res.url, imageFile: null })
+                })
+            }))
         },
         clearImage() {
             this.imageFile = null
@@ -545,6 +666,15 @@ export default {
                         detail: this.detailEnabledEn ? this.detailEn : '',
                     },
                 },
+                skus: this.skus.map((sku) => ({
+                    id: sku.id || undefined,
+                    name: sku.name,
+                    name_zh: sku.name,
+                    name_en: sku.name_en,
+                    amount: sku.amount,
+                    image: sku.imageCleared ? '' : (sku.imageUrl || ''),
+                    enabled: sku.enabled ? 1 : 0,
+                })),
             }
             if (this.editId) data.id = this.editId
             if (this.imageCleared) data.image = ''
@@ -553,8 +683,17 @@ export default {
         },
         handleSave() {
             if (!this.amount) return this.$message.info('请输入单价')
+            for (let i = 0; i < this.skus.length; i++) {
+                const sku = this.skus[i]
+                if (!String(sku.name || '').trim() && !String(sku.name_en || '').trim()) {
+                    return this.$message.info('请填写规格名称')
+                }
+                if (!sku.amount) {
+                    return this.$message.info('请填写规格单价')
+                }
+            }
             this.confirmLoading = true
-            Promise.all([this.uploadImage(), this.uploadImageEn()]).then(([image, imageEn]) => {
+            Promise.all([this.uploadImage(), this.uploadImageEn(), this.uploadSkuImages()]).then(([image, imageEn]) => {
                 const req = this.editId ? Gai.web3_goods_update(this.payload(image, imageEn)) : Gai.web3_goods_create(this.payload(image, imageEn))
                 return req.then((res) => {
                     if (res.status && res.status !== 'ok') {
@@ -652,6 +791,56 @@ export default {
     color: rgba(0, 0, 0, 0.45);
     font-size: 12px;
     line-height: 1.4;
+}
+.sku-card {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 12px;
+    padding: 12px;
+    border: 1px solid #e8e8e8;
+    border-radius: 8px;
+    background: #fafafa;
+}
+.sku-cover {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    width: 96px;
+    flex-shrink: 0;
+}
+.sku-preview {
+    display: block;
+    width: 96px;
+    height: 96px;
+    object-fit: cover;
+    border-radius: 6px;
+    background: #fff;
+    cursor: pointer;
+}
+.sku-cover-empty {
+    width: 96px;
+    height: 96px;
+    border-radius: 6px;
+    background: #f0f0f0;
+    color: rgba(0, 0, 0, 0.35);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+}
+.sku-fields {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.sku-price-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
 }
 .goods-cover {
     display: flex;

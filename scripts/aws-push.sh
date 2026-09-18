@@ -35,6 +35,7 @@ echo "sync to $USER@$HOST:$REMOTE"
 "${ssh_cmd[@]}" "sudo mkdir -p $REMOTE && sudo chown $USER:$USER $REMOTE"
 rsync -az --delete \
   --exclude .git --exclude bin --exclude '*.log' \
+  --exclude .env --exclude .env.local --exclude '*.pem' --exclude '*.key' \
   -e "$rsync_ssh" \
   "$ROOT/" "$USER@$HOST:$REMOTE/"
 
@@ -58,6 +59,7 @@ CIGC_SETTLE_CRON=0 0 * * *
 CIGC_SETTLE_TIMEZONE=Asia/Shanghai
 CIGC_BSC_RPC=https://bsc-dataseed.binance.org/
 CIGC_USDT_ADDRESS=0x55d398326f99059fF775485246999027B3197955
+CIGC_ISPAY_ADDRESS=0xBF9b0594E110C381F2606961C78641a194999999
 CIGC_BUY_CONTRACT=0x162bfFAcf7a89Bb6EbA05972C1DE0E1e97617c18
 CIGC_DEPOSIT_CONFIRMATIONS=12
 CIGC_DEPOSIT_CRON=* * * * *
@@ -67,6 +69,37 @@ ADMIN_DIST=./frontend/admin
 ENV
 fi
 chmod 600 .env
+python3 - <<'PY'
+from pathlib import Path
+p = Path('.env')
+text = p.read_text()
+lines = text.splitlines()
+keys = {}
+for line in lines:
+    if '=' in line and not line.lstrip().startswith('#'):
+        keys[line.split('=', 1)[0]] = True
+out = list(lines)
+if 'DAPP_DIST' not in keys:
+    out.append('DAPP_DIST=./frontend/dapp')
+if 'ADMIN_DIST' not in keys:
+    out.append('ADMIN_DIST=./frontend/admin')
+fixed = []
+for line in out:
+    if line.startswith('DAPP_DIST=') and 'placeholder' in line:
+        fixed.append('DAPP_DIST=./frontend/dapp')
+    elif line.startswith('ADMIN_DIST=') and 'placeholder' in line:
+        fixed.append('ADMIN_DIST=./frontend/admin')
+    else:
+        fixed.append(line)
+text = '\n'.join(fixed).rstrip() + '\n'
+p.write_text(text)
+p.chmod(0o600)
+print('dist_env_ready')
+PY
+if [[ ! -f frontend/dapp/index.html || ! -f frontend/admin/index.html ]]; then
+  echo "missing frontend dist at $REMOTE/frontend" >&2
+  exit 1
+fi
 sudo bash scripts/aws-bootstrap.sh
 EOF
 

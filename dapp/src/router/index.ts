@@ -10,7 +10,7 @@ import Home from '@/views/home/index.vue'
 import Trade from '@/views/trade/index.vue'
 import Node from '@/views/node/index.vue'
 import Contact from '@/views/contact/index.vue'
-import Address from '@/views/index/address.vue'
+import ShippingAddress from '@/views/subpage/shippingAddress.vue'
 import Shop from '@/views/subpage/shop.vue'
 import Order from '@/views/subpage/order.vue'
 import PowerShop from '@/views/subpage/powerShop.vue'
@@ -40,7 +40,7 @@ const routes = [
     { path: '/transfer', component: Transfer},
     { path: '/node', component: Node},
     { path: '/contact', component: Contact},
-    { path: '/address', component: Address},
+    { path: '/address', name: 'shippingAddress', component: ShippingAddress},
     { path: '/shop', component: Shop},
     { path: '/Web3Shop', name: 'web3Shop', component: Web3Shop},
     { path: '/Web3Shop/:id', name: 'web3GoodsDetail', component: Web3GoodsDetail},

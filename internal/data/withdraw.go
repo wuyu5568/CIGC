@@ -148,7 +148,8 @@ func (r *withdrawRepo) ListPayoutQueue(ctx context.Context, limit int) ([]*biz.A
 	var rows []row
 	err := r.data.Session(ctx).Table("withdraws").
 		Joins("LEFT JOIN users ON users.id = withdraws.user_id").
-		Where("withdraws.status IN ? AND (withdraws.asset = ? OR withdraws.asset = '' OR withdraws.asset IS NULL)", []string{biz.WithdrawRewarded, biz.WithdrawDoing}, biz.WithdrawAssetUSDT).
+		Where("withdraws.status IN ?", []string{biz.WithdrawRewarded, biz.WithdrawDoing}).
+		Where("(withdraws.asset = ? OR withdraws.asset = ? OR withdraws.asset = '' OR withdraws.asset IS NULL)", biz.WithdrawAssetUSDT, biz.WithdrawAssetIspay).
 		Select("withdraws.*, users.address AS address").
 		Order("withdraws.id ASC").
 		Limit(limit).

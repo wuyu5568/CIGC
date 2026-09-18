@@ -15,6 +15,15 @@ const service = axios.create({
     timeout: 30000 // 请求超时时间
 })
 
+function headerContentType (headers) {
+    if (!headers || typeof headers !== 'object') return ''
+    const pick = (obj) => {
+        if (!obj || typeof obj !== 'object') return ''
+        return obj['Content-Type'] || obj['Content-type'] || obj['content-type'] || ''
+    }
+    return String(pick(headers) || pick(headers.post) || pick(headers.common) || '')
+}
+
 function errorMessage (data, fallback) {
     if (data && typeof data === 'object') {
         return data.message || data.reason || fallback
@@ -34,7 +43,21 @@ const err = (error) => {
     if (error.response) {
         const data = error.response.data
         const status = error.response.status
-        const url = (error.config && error.config.url) || ''
+        if (status === 401 && !(data && data.result && data.result.isLogin)) {
+            notification.error({
+                message: '登录已失效',
+                description: errorMessage(data, '请重新登录')
+            })
+            const token = Vue.ls.get(ACCESS_TOKEN)
+            if (token) {
+                store.dispatch('Logout').then(() => {
+                    if (window.location.hash.indexOf('/user/login') === -1) {
+                        window.location.hash = '#/user/login'
+                    }
+                })
+            }
+            return Promise.reject(error)
+        }
         if (status === 403) {
             notification.error({
                 message: '没有权限',
@@ -42,33 +65,10 @@ const err = (error) => {
             })
             return Promise.reject(error)
         }
-        if (status === 401 && !(data && data.result && data.result.isLogin)) {
-            const sessionCheck = /my_auth_list/.test(url)
-            const token = Vue.ls.get(ACCESS_TOKEN)
-            if (sessionCheck) {
-                notification.error({
-                    message: '登录已失效',
-                    description: errorMessage(data, '请重新登录')
-                })
-                if (token) {
-                    store.dispatch('Logout').then(() => {
-                        if (window.location.hash.indexOf('/user/login') === -1) {
-                            window.location.hash = '#/user/login'
-                        }
-                    })
-                }
-            } else {
-                notification.error({
-                    message: '请求失败',
-                    description: errorMessage(data, '未授权')
-                })
-            }
-        } else {
-            notification.error({
-                message: '错误',
-                description: errorMessage(data, '网络错误')
-            })
-        }
+        notification.error({
+            message: '错误',
+            description: errorMessage(data, '网络错误')
+        })
     }
     return Promise.reject(error)
 }
@@ -93,7 +93,7 @@ service.interceptors.request.use(config => {
         if (config.data instanceof FormData) {
             delete config.headers['Content-type']
             delete config.headers['Content-Type']
-        } else {
+        } else if (!headerContentType(config.headers).toLowerCase().includes('application/json')) {
             config.headers['Content-type'] = 'application/x-www-form-urlencoded'
             config.data = qs.stringify(config.data)
         }

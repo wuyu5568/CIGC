@@ -49,6 +49,7 @@ type DailyCapRepo interface {
 	GetUsed(ctx context.Context, userID uint64, settleDate time.Time) (decimal.Decimal, error)
 	CreateHold(ctx context.Context, h *CapOverflowHold) error
 	ListActiveHolds(ctx context.Context, userID uint64) ([]*CapOverflowHold, error)
+	ListActiveHoldsAll(ctx context.Context) ([]*CapOverflowHold, error)
 	ActiveTotals(ctx context.Context, userID uint64) (usdt, ispay decimal.Decimal, err error)
 	ListExpired(ctx context.Context, now time.Time, limit int) ([]*CapOverflowHold, error)
 	GetHold(ctx context.Context, id uint64) (*CapOverflowHold, error)
@@ -222,6 +223,26 @@ func (m *memDailyCap) ListActiveHolds(_ context.Context, userID uint64) ([]*CapO
 	var out []*CapOverflowHold
 	for _, h := range m.holds {
 		if h.UserID != userID || !m.holdOpen(h) {
+			continue
+		}
+		cp := *h
+		out = append(out, &cp)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out, nil
+}
+
+func (m *memDailyCap) ListActiveHoldsAll(_ context.Context) ([]*CapOverflowHold, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []*CapOverflowHold
+	for _, h := range m.holds {
+		if !m.holdOpen(h) {
 			continue
 		}
 		cp := *h

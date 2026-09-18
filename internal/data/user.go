@@ -468,6 +468,36 @@ func (r *ledgerRepo) ListPaged(ctx context.Context, address string, entryTypes [
 	return out, int(total), nil
 }
 
+func (r *ledgerRepo) ListByTypes(ctx context.Context, address string, entryTypes []string) ([]*biz.LedgerEntry, error) {
+	base := r.data.db.WithContext(ctx).Table("ledger_entries").
+		Joins("LEFT JOIN users ON users.id = ledger_entries.user_id")
+	if address != "" {
+		base = base.Where("users.address LIKE ?", "%"+address+"%")
+	}
+	if len(entryTypes) == 1 {
+		base = base.Where("ledger_entries.entry_type = ?", entryTypes[0])
+	} else if len(entryTypes) > 1 {
+		base = base.Where("ledger_entries.entry_type IN ?", entryTypes)
+	}
+	type ledgerAdminRow struct {
+		LedgerEntryModel
+		Address string `gorm:"column:address"`
+	}
+	var rows []ledgerAdminRow
+	if err := base.Session(&gorm.Session{}).
+		Select("ledger_entries.*, users.address AS address").
+		Order("ledger_entries.created_at DESC, ledger_entries.id DESC").
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]*biz.LedgerEntry, len(rows))
+	for i := range rows {
+		out[i] = ledgerModelToBiz(&rows[i].LedgerEntryModel)
+		out[i].Address = rows[i].Address
+	}
+	return out, nil
+}
+
 func (r *ledgerRepo) FindMatching(ctx context.Context, userID uint64, entryType string, orderID *uint64, settleDate *time.Time, remark string) (*biz.LedgerEntry, error) {
 	q := r.data.Session(ctx).Model(&LedgerEntryModel{}).
 		Where("user_id = ? AND entry_type = ? AND remark = ?", userID, entryType, remark)

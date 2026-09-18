@@ -27,6 +27,7 @@ func newApp(cfg *conf.Bootstrap, d *data.Data, logger *slog.Logger) (*kratos.App
 		cfg.App.GenesisAddress,
 		place,
 	)
+	users.SetShipping(data.NewShippingAddressRepo(d))
 	orders := biz.NewOrderUseCase(
 		data.NewPackageRepo(d),
 		data.NewOrderRepo(d),
@@ -60,6 +61,7 @@ func newApp(cfg *conf.Bootstrap, d *data.Data, logger *slog.Logger) (*kratos.App
 		d,
 	)
 	withdraw.SetPayout(data.NewChainPayer(&cfg.App), cfg.App.PayoutEnabled, decimal.NewFromFloat(cfg.App.PayoutMaxUSDT))
+	withdraw.SetIspayPayoutMaxFallback(decimal.NewFromFloat(cfg.App.PayoutMaxIspay))
 	withdraw.SetTimezone(cfg.App.SettleTimezone)
 	deposit := biz.NewDepositUseCase(
 		data.NewUserRepo(d),

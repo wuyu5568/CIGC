@@ -17,8 +17,7 @@ func (m *memPackages) ListEnabled(_ context.Context) ([]*Package, error) {
 	out := make([]*Package, 0, len(m.rows))
 	for _, p := range m.rows {
 		if p.Enabled {
-			cp := *p
-			out = append(out, &cp)
+			out = append(out, clonePackage(p))
 		}
 	}
 	return out, nil
@@ -27,8 +26,7 @@ func (m *memPackages) ListEnabled(_ context.Context) ([]*Package, error) {
 func (m *memPackages) ListAll(_ context.Context) ([]*Package, error) {
 	out := make([]*Package, 0, len(m.rows))
 	for _, p := range m.rows {
-		cp := *p
-		out = append(out, &cp)
+		out = append(out, clonePackage(p))
 	}
 	return out, nil
 }
@@ -39,8 +37,7 @@ func (m *memPackages) FindByAmount(_ context.Context, amount decimal.Decimal, da
 	}
 	for _, p := range m.rows {
 		if p.Amount.Equal(amount) && PackageReleaseDays(p) == days {
-			cp := *p
-			return &cp, nil
+			return clonePackage(p), nil
 		}
 	}
 	return nil, ErrPackageNotFound
@@ -49,8 +46,7 @@ func (m *memPackages) FindByAmount(_ context.Context, amount decimal.Decimal, da
 func (m *memPackages) FindByID(_ context.Context, id uint64) (*Package, error) {
 	for _, p := range m.rows {
 		if p.ID == id {
-			cp := *p
-			return &cp, nil
+			return clonePackage(p), nil
 		}
 	}
 	return nil, ErrPackageNotFound
@@ -59,10 +55,10 @@ func (m *memPackages) FindByID(_ context.Context, id uint64) (*Package, error) {
 func (m *memPackages) Update(_ context.Context, p *Package) (*Package, error) {
 	for i, row := range m.rows {
 		if row.ID == p.ID {
-			cp := *p
-			m.rows[i] = &cp
-			out := cp
-			return &out, nil
+			cp := clonePackage(p)
+			m.assignSKUIds(cp)
+			m.rows[i] = cp
+			return clonePackage(cp), nil
 		}
 	}
 	return nil, ErrPackageNotFound
@@ -79,7 +75,7 @@ func (m *memPackages) UpdateSortOrder(_ context.Context, id uint64, sort int) er
 }
 
 func (m *memPackages) Create(_ context.Context, p *Package) (*Package, error) {
-	cp := *p
+	cp := clonePackage(p)
 	var maxID uint64
 	for _, row := range m.rows {
 		if row.ID > maxID {
@@ -87,9 +83,47 @@ func (m *memPackages) Create(_ context.Context, p *Package) (*Package, error) {
 		}
 	}
 	cp.ID = maxID + 1
-	m.rows = append(m.rows, &cp)
-	out := cp
-	return &out, nil
+	m.assignSKUIds(cp)
+	m.rows = append(m.rows, cp)
+	return clonePackage(cp), nil
+}
+
+func (m *memPackages) assignSKUIds(p *Package) {
+	if m == nil || p == nil {
+		return
+	}
+	var maxSKU uint64
+	for _, row := range m.rows {
+		for _, sku := range row.SKUs {
+			if sku.ID > maxSKU {
+				maxSKU = sku.ID
+			}
+		}
+	}
+	for i := range p.SKUs {
+		if p.SKUs[i].ID == 0 {
+			maxSKU++
+			p.SKUs[i].ID = maxSKU
+		}
+		p.SKUs[i].PackageID = p.ID
+	}
+}
+
+func clonePackage(p *Package) *Package {
+	if p == nil {
+		return nil
+	}
+	cp := *p
+	if p.Contents != nil {
+		cp.Contents = make(map[string]PackageContent, len(p.Contents))
+		for k, v := range p.Contents {
+			cp.Contents[k] = v
+		}
+	}
+	if p.SKUs != nil {
+		cp.SKUs = append([]PackageSKU(nil), p.SKUs...)
+	}
+	return &cp
 }
 
 func (m *memPackages) Delete(_ context.Context, id uint64) error {
@@ -475,6 +509,45 @@ func TestBuyCartWithRecharge_SumsAndCaps(t *testing.T) {
 	}
 	if !got.CapEffective.Equal(decimal.RequireFromString("1800")) {
 		t.Fatalf("cap=%s", got.CapEffective)
+	}
+}
+
+func TestBuyCartWithRecharge_UsesSKUAmount(t *testing.T) {
+	ResetRuntimeCapTiers()
+	users := newMemUsers()
+	u, err := users.Create(context.Background(), &User{
+		Address: "0xabc", RechargeBalance: decimal.RequireFromString("5000"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ords := newMemOrders(users)
+	uc := NewOrderUseCase(&memPackages{rows: []*Package{
+		{ID: 1, Amount: decimal.RequireFromString("1000"), Title: "牙刷挖矿", Enabled: true, SKUs: []PackageSKU{
+			{ID: 11, Name: "白", Amount: decimal.RequireFromString("800"), Enabled: true},
+			{ID: 12, Name: "黑", Amount: decimal.RequireFromString("1200"), Enabled: true},
+		}},
+	}}, ords, users, users, &memLedger{})
+	if _, err := uc.BuyCartWithRecharge(context.Background(), u.ID, []CartItem{
+		{GoodsID: 1, Qty: 1},
+	}, 300); err != ErrSKUInvalid {
+		t.Fatalf("missing sku: %v", err)
+	}
+	if _, err := uc.BuyWithRechargeGoods(context.Background(), u.ID, 1, 300); err != ErrSKUInvalid {
+		t.Fatalf("goods buy without sku: %v", err)
+	}
+	o, err := uc.BuyCartWithRecharge(context.Background(), u.ID, []CartItem{
+		{GoodsID: 1, SkuID: 11, Qty: 2},
+		{GoodsID: 1, SkuID: 12, Qty: 1},
+	}, 300)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !o.Amount.Equal(decimal.RequireFromString("2800")) {
+		t.Fatalf("amount=%s", o.Amount)
+	}
+	if o.TitleSnapshot != "牙刷挖矿 / 白×2、牙刷挖矿 / 黑" {
+		t.Fatalf("title=%s", o.TitleSnapshot)
 	}
 }
 

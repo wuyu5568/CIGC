@@ -10,17 +10,36 @@
   >
   </van-nav-bar>
   <div class="page-main" v-if="item.id">
-    <div class="hero" v-if="item.image">
-      <img :src="item.image" alt="" />
+    <div class="hero" v-if="displayImage">
+      <img :src="displayImage" alt="" />
     </div>
     <div class="title-block">
       <h1>{{ item.name || item.desc }}</h1>
       <p v-if="item.desc && item.desc !== item.name" class="short-desc">{{ item.desc }}</p>
     </div>
+    <div class="sku-block" v-if="skus.length">
+      <div class="sku-label">{{ lang('规格') }}</div>
+      <div class="sku-list">
+        <button
+          v-for="sku in skus"
+          :key="sku.id"
+          type="button"
+          class="sku-chip"
+          :class="{ on: Number(selectedSkuId) === Number(sku.id) }"
+          @click="selectedSkuId = Number(sku.id)"
+        >
+          <img v-if="sku.image" :src="sku.image" alt="" />
+          <span class="sku-chip-text">
+            <span>{{ sku.name }}</span>
+            <em>{{ fmt(sku.amount) }} U</em>
+          </span>
+        </button>
+      </div>
+    </div>
     <ul class="investment-details">
       <li>
         <span class="detail-label">{{ lang('单价') }}</span>
-        <span class="detail-value">{{ fmt(item.amount) }} USDT</span>
+        <span class="detail-value">{{ fmt(selectedAmount) }} USDT</span>
       </li>
       <li>
         <span class="detail-label">{{ lang('日封顶') }}</span>
@@ -35,58 +54,59 @@
     <div class="buy-pad"></div>
   </div>
   <van-empty v-else-if="!loading" :description="lang('商品不存在')" />
-  <!-- <div class="buy-bar" v-if="item.id">
-    <div class="buy-price">{{ fmt(item.amount) }} <em>USDT</em></div>
-    <button class="purchase-btn" :disabled="loading" @click="isOpen = true">{{ lang('购买') }}</button>
-  </div> -->
-  <Web3BuyModal
-    v-model="isOpen"
-    :goods-id="item.id"
-    :amount="item.amount"
-    :spot="spot"
-  />
+  <div class="buy-bar" v-if="item.id">
+    <div class="buy-price">{{ fmt(selectedAmount) }} <em>USDT</em></div>
+    <button class="purchase-btn" :disabled="loading" @click="addToCart">{{ lang('加入购物车') }}</button>
+  </div>
 </div>
 </template>
 <script setup>
 import { watch } from 'vue'
-import userPerson from "@/pinia/person";
 import lang from '@/i18n/index'
 import request from "@/tools/request";
-import { showFailToast } from "vant";
+import { showFailToast, showSuccessToast } from "vant";
 import { useRoute, useRouter } from 'vue-router'
 import { displayAmount } from '@/tools/amount'
 import { capForAmount, rangeForAmount, loadCapTiers, currentCapTiers } from '@/tools/dailyCap'
-import Web3BuyModal from './components/web3BuyModal.vue'
+import { readCart, persistCart, enabledSKUs, changeCartQty } from '@/tools/web3Cart'
 
 const router = useRouter()
 const route = useRoute()
-const person = userPerson();
-const userinfo = $computed(() => person.userinfo);
 let loading = $ref(false)
 let item = $ref({})
-const price = $ref('')
-const isOpen = $ref(false)
-const spot = $computed(() => price || userinfo.ispayPrice || '2000')
+let selectedSkuId = $ref(0)
 
 const fmt = (v) => displayAmount(v)
 let capTiers = $ref(currentCapTiers())
-const dailyCap = $computed(() => capForAmount(item.amount, capTiers) || item.daily_cap)
-const capRange = $computed(() => rangeForAmount(item.amount, capTiers))
+const skus = $computed(() => enabledSKUs(item))
+const selectedSku = $computed(() => skus.find((x) => Number(x.id) === Number(selectedSkuId)) || null)
+const selectedAmount = $computed(() => (selectedSku && selectedSku.amount) || item.amount)
+const displayImage = $computed(() => (selectedSku && selectedSku.image) || item.image || '')
+const dailyCap = $computed(() => capForAmount(selectedAmount, capTiers) || item.daily_cap)
+const capRange = $computed(() => rangeForAmount(selectedAmount, capTiers))
 
 const handleBack = () => {
   router.push('/Web3Shop')
 }
 
-const fetchPrice = () => {
-  request.get('app_server/ispay_price').then((res) => {
-    if (res && res.price) price = res.price
-  }).catch(() => {})
+const addToCart = () => {
+  if (!item?.id) {
+    showFailToast(lang('商品信息错误'))
+    return
+  }
+  if (skus.length && !selectedSku) {
+    showFailToast(lang('请选择规格'))
+    return
+  }
+  persistCart(changeCartQty(readCart(), item, 1, selectedSku))
+  showSuccessToast(lang('已加入购物车'))
 }
 
 const fetchDetail = async () => {
   const id = Number(route.params.id)
   if (!id) {
     item = {}
+    selectedSkuId = 0
     return
   }
   loading = true
@@ -96,6 +116,8 @@ const fetchDetail = async () => {
     if (Number(route.params.id) !== id) return
     if (res && res.status === 'ok' && res.item) {
       item = res.item
+      const first = enabledSKUs(item)[0]
+      selectedSkuId = first ? Number(first.id) : 0
     } else {
       item = {}
       showFailToast(res?.status || lang('商品不存在'))
@@ -110,7 +132,6 @@ const fetchDetail = async () => {
 }
 
 watch(() => route.params.id, fetchDetail, { immediate: true })
-fetchPrice()
 loadCapTiers(request).then((rows) => {
   if (rows && rows.length) capTiers = rows
 })
@@ -123,6 +144,59 @@ loadCapTiers(request).then((rows) => {
       width: 100%;
       padding: 60px 15px 90px;
       box-sizing: border-box;
+    }
+    .sku-block {
+      margin: 0 0 16px;
+      padding: 12px;
+      background: rgba(34, 34, 34, 0.88);
+      border: 1px solid #333;
+      border-radius: 12px;
+    }
+    .sku-label {
+      color: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 10px;
+    }
+    .sku-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .sku-chip {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px 6px 6px;
+      border: 1px solid #444;
+      border-radius: 10px;
+      background: #1f1f1f;
+      color: #e8e8e8;
+      font-size: 13px;
+      text-align: left;
+      img {
+        width: 44px;
+        height: 44px;
+        border-radius: 6px;
+        object-fit: cover;
+        background: #2d2d2d;
+        flex-shrink: 0;
+      }
+      .sku-chip-text {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 2px;
+      }
+      em {
+        font-style: normal;
+        color: #cab255;
+        font-size: 12px;
+      }
+      &.on {
+        border-color: #cab255;
+        background: rgba(202, 178, 85, 0.12);
+      }
     }
     .hero {
       width: 100%;

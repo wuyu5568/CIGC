@@ -101,6 +101,22 @@ func (r *dailyCapRepo) ListActiveHolds(ctx context.Context, userID uint64) ([]*b
 	return out, nil
 }
 
+func (r *dailyCapRepo) ListActiveHoldsAll(ctx context.Context) ([]*biz.CapOverflowHold, error) {
+	var rows []CapOverflowHoldModel
+	err := r.data.Session(ctx).
+		Where("released_at IS NULL AND burned_at IS NULL AND value > 0").
+		Order("created_at ASC, id ASC").
+		Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*biz.CapOverflowHold, len(rows))
+	for i := range rows {
+		out[i] = toBizHold(&rows[i])
+	}
+	return out, nil
+}
+
 func (r *dailyCapRepo) ActiveTotals(ctx context.Context, userID uint64) (decimal.Decimal, decimal.Decimal, error) {
 	var row struct {
 		USDT  decimal.Decimal

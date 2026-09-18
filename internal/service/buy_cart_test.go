@@ -30,4 +30,8 @@ func TestParseBuyCartItems(t *testing.T) {
 	if _, _, err := parseBuyCartItems(json.RawMessage(`[{"id":0,"qty":1}]`)); !errors.Is(err, biz.ErrPackageNotFound) {
 		t.Fatalf("id0: %v", err)
 	}
+	cart, has, err = parseBuyCartItems(json.RawMessage(`[{"id":1,"sku_id":9,"qty":2}]`))
+	if err != nil || !has || len(cart) != 1 || cart[0] != (biz.CartItem{GoodsID: 1, SkuID: 9, Qty: 2}) {
+		t.Fatalf("sku cart=%+v has=%v err=%v", cart, has, err)
+	}
 }

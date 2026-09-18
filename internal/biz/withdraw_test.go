@@ -102,7 +102,7 @@ func (m *memWithdraws) ListPayoutQueue(_ context.Context, limit int) ([]*AdminWi
 	}
 	var out []*AdminWithdrawRow
 	for _, w := range m.byID {
-		if withdrawAssetOf(w) != WithdrawAssetUSDT {
+		if withdrawAssetOf(w) != WithdrawAssetUSDT && withdrawAssetOf(w) != WithdrawAssetIspay {
 			continue
 		}
 		if w.Status != WithdrawRewarded && w.Status != WithdrawDoing {
@@ -159,6 +159,7 @@ type memConfigs struct {
 	ispayPrice      string
 	overflowHours   string
 	withdrawEnabled string
+	payoutMaxIspay  string
 	rows            []*BusinessConfig
 }
 
@@ -216,6 +217,10 @@ func (m *memConfigs) GetValue(_ context.Context, key string) (string, error) {
 		if m.withdrawEnabled != "" {
 			return m.withdrawEnabled, nil
 		}
+	case ConfigPayoutMaxIspay:
+		if m.payoutMaxIspay != "" {
+			return m.payoutMaxIspay, nil
+		}
 	}
 	for _, r := range m.rows {
 		if r.Key == key {
@@ -271,6 +276,8 @@ func (m *memConfigs) SetValue(_ context.Context, id uint64, value string) error 
 				m.overflowHours = value
 			case ConfigWithdrawEnabled:
 				m.withdrawEnabled = value
+			case ConfigPayoutMaxIspay:
+				m.payoutMaxIspay = value
 			}
 			return nil
 		}
@@ -612,7 +619,7 @@ func TestCreateWithdraw_IspayInactiveAndFreeze(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if wd.Asset != WithdrawAssetIspay || wd.Status != WithdrawPending {
+	if wd.Asset != WithdrawAssetIspay || wd.Status != WithdrawRewarded {
 		t.Fatalf("asset=%s status=%s", wd.Asset, wd.Status)
 	}
 	got, err := users.FindByID(context.Background(), active.ID)
@@ -646,12 +653,30 @@ func TestWithdrawIspayPassAndReject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	uc := newWithdrawUC(users, &memLedger{}, newMemWithdraws(), "10")
+	wds := newMemWithdraws()
+	uc := newWithdrawUC(users, &memLedger{}, wds, "10")
 	passWD, err := uc.CreateAsset(context.Background(), u.ID, decimal.RequireFromString("1"), WithdrawAssetIspay)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := uc.Pass(context.Background(), passWD.ID); err != nil {
+	if passWD.Status != WithdrawRewarded {
+		t.Fatalf("new ispay status %s", passWD.Status)
+	}
+	if _, err := uc.Pass(context.Background(), passWD.ID); !errors.Is(err, ErrWithdrawConflict) {
+		t.Fatalf("rewarded pass: %v", err)
+	}
+	legacy, err := wds.Create(context.Background(), &Withdraw{
+		UserID:         u.ID,
+		Amount:         decimal.RequireFromString("0.5"),
+		FeeAmount:      decimal.Zero,
+		CreditedAmount: decimal.RequireFromString("0.5"),
+		Asset:          WithdrawAssetIspay,
+		Status:         WithdrawPending,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := uc.Pass(context.Background(), legacy.ID); err != nil {
 		t.Fatal(err)
 	}
 	got, err := users.FindByID(context.Background(), u.ID)
@@ -786,7 +811,7 @@ type memPayer struct {
 
 func (m *memPayer) FromAddress() string { return m.from }
 
-func (m *memPayer) TransferUSDT(_ context.Context, _ string, _ decimal.Decimal) (string, error) {
+func (m *memPayer) Transfer(_ context.Context, _ string, _ string, _ decimal.Decimal) (string, error) {
 	m.sends++
 	return m.hash, m.sendErr
 }
@@ -892,7 +917,15 @@ func TestRunPayout_SkipOverMaxAndIspay(t *testing.T) {
 	if res.Skipped != 1 || p.sends != 0 {
 		t.Fatalf("%+v sends=%d", res, p.sends)
 	}
-	ispayUser, err := users.Create(context.Background(), &User{
+}
+
+func TestRunPayout_IspayPaysAndUnfreezes(t *testing.T) {
+	users := newMemUsers()
+	cfg := &memConfigs{min: "10", payoutMaxIspay: "100"}
+	uc := NewWithdrawUseCase(users, users, &memLedger{}, newMemWithdraws(), cfg, NopTx{})
+	p := &memPayer{hash: "0xispay", ok: true}
+	uc.SetPayout(p, true, decimal.RequireFromString("100"))
+	u, err := users.Create(context.Background(), &User{
 		Address:      "0x2222222222222222222222222222222222222222",
 		IspayBalance: decimal.RequireFromString("5"),
 		PaidAmount:   decimal.RequireFromString("1000"),
@@ -900,20 +933,60 @@ func TestRunPayout_SkipOverMaxAndIspay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	uc.SetPayout(p, true, decimal.RequireFromString("100"))
-	ispayWD, err := uc.CreateAsset(context.Background(), ispayUser.ID, decimal.RequireFromString("1"), WithdrawAssetIspay)
+	wd, err := uc.CreateAsset(context.Background(), u.ID, decimal.RequireFromString("1"), WithdrawAssetIspay)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := uc.Pass(context.Background(), ispayWD.ID); err != nil {
+	if wd.Status != WithdrawRewarded {
+		t.Fatalf("status %s", wd.Status)
+	}
+	res, err := uc.RunPayout(context.Background(), wd.ID)
+	if err != nil {
 		t.Fatal(err)
 	}
-	res, err = uc.RunPayout(context.Background(), ispayWD.ID)
+	if res.Sent != 1 || res.Passed != 1 || p.sends != 1 {
+		t.Fatalf("%+v sends=%d", res, p.sends)
+	}
+	got, err := users.FindByID(context.Background(), u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.FrozenIspay.IsZero() || !got.IspayBalance.Equal(decimal.RequireFromString("4")) {
+		t.Fatalf("ispay=%s frozen=%s", got.IspayBalance, got.FrozenIspay)
+	}
+	wd, err = uc.withdraws.FindByID(context.Background(), wd.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wd.Status != WithdrawPass || wd.TxHash != "0xispay" {
+		t.Fatalf("%+v", wd)
+	}
+}
+
+func TestRunPayout_SkipIspayOverAdminMax(t *testing.T) {
+	users := newMemUsers()
+	cfg := &memConfigs{min: "10", payoutMaxIspay: "1"}
+	uc := NewWithdrawUseCase(users, users, &memLedger{}, newMemWithdraws(), cfg, NopTx{})
+	p := &memPayer{hash: "0x1", ok: true}
+	uc.SetPayout(p, true, decimal.RequireFromString("100"))
+	u, err := users.Create(context.Background(), &User{
+		Address:      "0x2222222222222222222222222222222222222222",
+		IspayBalance: decimal.RequireFromString("5"),
+		PaidAmount:   decimal.RequireFromString("1000"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wd, err := uc.CreateAsset(context.Background(), u.ID, decimal.RequireFromString("2"), WithdrawAssetIspay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := uc.RunPayout(context.Background(), wd.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.Skipped != 1 || p.sends != 0 {
-		t.Fatalf("ispay %+v sends=%d", res, p.sends)
+		t.Fatalf("%+v sends=%d", res, p.sends)
 	}
 }
 

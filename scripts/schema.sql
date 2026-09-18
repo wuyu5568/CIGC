@@ -45,6 +45,18 @@ CREATE TABLE IF NOT EXISTS user_recommends (
     CONSTRAINT fk_user_recommends_user FOREIGN KEY (user_id) REFERENCES users (id)
 ) ENGINE=InnoDB DEFAULT CHARSET utf8mb4;
 
+CREATE TABLE IF NOT EXISTS shipping_addresses (
+    id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    user_id     BIGINT UNSIGNED NOT NULL COMMENT 'one address per user',
+    name        VARCHAR(64)     NOT NULL DEFAULT '',
+    contact     VARCHAR(64)     NOT NULL DEFAULT '' COMMENT 'phone or other contact',
+    address     VARCHAR(512)    NOT NULL DEFAULT '',
+    created_at  DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at  DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    UNIQUE KEY uk_shipping_addresses_user (user_id),
+    CONSTRAINT fk_shipping_addresses_user FOREIGN KEY (user_id) REFERENCES users (id)
+) ENGINE=InnoDB DEFAULT CHARSET utf8mb4;
+
 CREATE TABLE IF NOT EXISTS packages (
     id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
     amount      DECIMAL(36, 8)  NOT NULL,
@@ -74,6 +86,21 @@ CREATE TABLE IF NOT EXISTS package_contents (
     UNIQUE KEY uk_package_contents_locale (package_id, locale),
     KEY idx_package_contents_locale (locale),
     CONSTRAINT fk_package_contents_package FOREIGN KEY (package_id) REFERENCES packages (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET utf8mb4;
+
+CREATE TABLE IF NOT EXISTS package_skus (
+    id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    package_id  BIGINT UNSIGNED NOT NULL,
+    name        VARCHAR(128)    NOT NULL DEFAULT '',
+    name_en     VARCHAR(128)    NOT NULL DEFAULT '',
+    amount      DECIMAL(36, 8)  NOT NULL DEFAULT 0,
+    image       VARCHAR(512)    NOT NULL DEFAULT '',
+    sort_order  INT             NOT NULL DEFAULT 0,
+    enabled     TINYINT(1)      NOT NULL DEFAULT 1,
+    created_at  DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at  DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    KEY idx_package_skus_package (package_id, sort_order, id),
+    CONSTRAINT fk_package_skus_package FOREIGN KEY (package_id) REFERENCES packages (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET utf8mb4;
 
 INSERT INTO packages (amount, title, goods_desc, daily_cap, sort_order, enabled)
@@ -185,6 +212,7 @@ INSERT INTO business_configs (config_key, name, value, sort_order) VALUES
 ('withdraw_fee_rate_ispay', 'ISPAY 提现手续费', '0', 43),
 ('withdraw_daily_limit', 'USDT 单笔提现上限', '1000', 44),
 ('withdraw_daily_limit_ispay', 'ISPAY 单笔提现上限', '1000', 45),
+('payout_max_ispay', 'ISPAY 单笔打款上限', '1000', 46),
 ('ispay_price', 'ISPAY 测试现价', '2000', 50),
 ('overflow_clear_hours', '冻结清除时间', '72', 60),
 ('withdraw_enabled', '提现开关', '1', 70),

@@ -71,6 +71,25 @@ func (m *memLedger) ListPaged(_ context.Context, address string, entryTypes []st
 	return filtered[start:end], total, nil
 }
 
+func (m *memLedger) ListByTypes(ctx context.Context, address string, entryTypes []string) ([]*LedgerEntry, error) {
+	rows, _, err := m.ListPaged(ctx, address, entryTypes, 1, 1<<20)
+	if err != nil {
+		return nil, err
+	}
+	if address == "" {
+		return rows, nil
+	}
+	q := strings.ToLower(strings.TrimSpace(address))
+	out := make([]*LedgerEntry, 0, len(rows))
+	for _, e := range rows {
+		if e == nil || !strings.Contains(strings.ToLower(e.Address), q) {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out, nil
+}
+
 func (m *memLedger) FindMatching(_ context.Context, userID uint64, entryType string, orderID *uint64, settleDate *time.Time, remark string) (*LedgerEntry, error) {
 	day := ""
 	if settleDate != nil {
@@ -566,5 +585,48 @@ func TestListAdminRewards_ManageSourceAddress(t *testing.T) {
 	}
 	if len(page.Items) != 1 || page.Items[0].SourceAddress != "0xsource" {
 		t.Fatalf("manage source %+v", page)
+	}
+}
+
+func TestListAdminFreezeRelease_PairsPerUser(t *testing.T) {
+	now := time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)
+	day := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)
+	repo := &memLedger{rows: []*LedgerEntry{
+		{ID: 1, UserID: 1, EntryType: LedgerActivate, Amount: decimal.RequireFromString("10"), BalanceKind: BalanceAvailable, SettleDate: &day, Remark: remarkDailyLockUSDT, Address: "0xone", CreatedAt: now},
+		{ID: 2, UserID: 1, EntryType: LedgerActivateIspay, Amount: decimal.RequireFromString("0.005"), BalanceKind: BalanceIspay, SettleDate: &day, Remark: remarkDailyLockIspay, Address: "0xone", CreatedAt: now},
+		{ID: 3, UserID: 2, EntryType: LedgerActivate, Amount: decimal.RequireFromString("20"), BalanceKind: BalanceAvailable, SettleDate: &day, Remark: remarkDailyLockUSDT, Address: "0xtwo", CreatedAt: now},
+		{ID: 4, UserID: 2, EntryType: LedgerActivateIspay, Amount: decimal.RequireFromString("0.01"), BalanceKind: BalanceIspay, SettleDate: &day, Remark: remarkDailyLockIspay, Address: "0xtwo", CreatedAt: now},
+		{ID: 5, UserID: 1, EntryType: LedgerActivate, Amount: decimal.RequireFromString("-3"), BalanceKind: BalanceLock, SettleDate: &day, Remark: remarkOverflowClear72h, Address: "0xone", CreatedAt: now},
+		{ID: 6, UserID: 1, EntryType: LedgerActivateIspay, Amount: decimal.RequireFromString("-0.001"), BalanceKind: BalanceLockIspay, SettleDate: &day, Remark: remarkOverflowClear72h, Address: "0xone", CreatedAt: now},
+	}}
+	uc := NewLedgerUseCase(repo, nil, nil)
+	page, err := uc.ListAdminFreezeRelease(context.Background(), "", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 3 {
+		t.Fatalf("total=%d %+v", page.Total, page.Items)
+	}
+	byAddr := map[string]*RewardItem{}
+	var clear *RewardItem
+	for _, it := range page.Items {
+		if it.Reason == "unfreeze_clear" {
+			clear = it
+			continue
+		}
+		byAddr[it.Address] = it
+	}
+	if byAddr["0xone"] == nil || byAddr["0xone"].Amount != "10" || byAddr["0xone"].AmountTwo != "0.005" {
+		t.Fatalf("user1 %+v", byAddr["0xone"])
+	}
+	if byAddr["0xtwo"] == nil || byAddr["0xtwo"].Amount != "20" || byAddr["0xtwo"].AmountTwo != "0.01" {
+		t.Fatalf("user2 %+v", byAddr["0xtwo"])
+	}
+	if clear == nil || clear.Amount != "3" || clear.AmountTwo != "0.001" || clear.Name != "冻结清除" {
+		t.Fatalf("clear %+v", clear)
+	}
+	onlyTwo, err := uc.ListAdminFreezeRelease(context.Background(), "0xtwo", 1)
+	if err != nil || onlyTwo.Total != 1 || onlyTwo.Items[0].Address != "0xtwo" {
+		t.Fatalf("filter %+v err=%v", onlyTwo, err)
 	}
 }

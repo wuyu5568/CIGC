@@ -134,6 +134,21 @@ type PackageContentModel struct {
 
 func (PackageContentModel) TableName() string { return "package_contents" }
 
+type PackageSKUModel struct {
+	ID        uint64          `gorm:"primaryKey"`
+	PackageID uint64          `gorm:"column:package_id;index:idx_package_skus_package"`
+	Name      string          `gorm:"size:128"`
+	NameEn    string          `gorm:"column:name_en;size:128"`
+	Amount    decimal.Decimal `gorm:"type:decimal(36,8)"`
+	Image     string          `gorm:"size:512"`
+	SortOrder int             `gorm:"column:sort_order"`
+	Enabled   bool
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+func (PackageSKUModel) TableName() string { return "package_skus" }
+
 type OrderModel struct {
 	ID            uint64 `gorm:"primaryKey"`
 	OrderNo       string `gorm:"column:order_no;size:32"`
@@ -236,3 +251,15 @@ type ChainDepositModel struct {
 }
 
 func (ChainDepositModel) TableName() string { return "chain_deposits" }
+
+type ShippingAddressModel struct {
+	ID        uint64 `gorm:"primaryKey"`
+	UserID    uint64 `gorm:"column:user_id;uniqueIndex"`
+	Name      string `gorm:"size:64"`
+	Contact   string `gorm:"size:64"`
+	Address   string `gorm:"size:512"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+func (ShippingAddressModel) TableName() string { return "shipping_addresses" }

@@ -77,7 +77,7 @@ const user = {
                     resolve(home)
                 }).catch(error => {
                     const status = error && error.response && error.response.status
-                    if (status === 401) {
+                    if (status === 401 || status === 403) {
                         commit('SET_TOKEN', '')
                         Vue.ls.remove(ACCESS_TOKEN)
                         state.authFetched = false

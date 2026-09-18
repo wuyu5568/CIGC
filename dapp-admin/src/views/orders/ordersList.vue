@@ -19,7 +19,7 @@
                     </a-button-group>
                 </a-col>
             </a-row>
-            <a-table :loading="loading" :columns="columns" :dataSource="data" :pagination="{ total, pageSize, current }"
+            <a-table :loading="loading" :columns="tableColumns" :dataSource="data" :pagination="{ total, pageSize, current }"
                 @change="changePagination" bordered :scroll="{ x: true }">
             </a-table>
         </a-card>
@@ -37,7 +37,17 @@ const reasonType = {
     direct: '直推奖励',
     match: '对碰奖励',
     manage: '管理奖',
+    freeze_asset: '冻结资产明细',
+    freeze_release: '冻结释放明细',
 }
+
+const orderSource = (v, row) => {
+    if (v) return v
+    if (row.orderNo && row.orderAmount) return `${row.orderNo} / ${row.orderAmount}`
+    return row.orderNo || '-'
+}
+
+const dash = (v) => v || '-'
 
 export default {
     name: 'ordersList',
@@ -45,74 +55,53 @@ export default {
     data() {
         return {
             reasonType,
-            columns: [
-                {
-                    title: '时间',
-                    dataIndex: 'createdAt',
-                },
-                {
-                    title: '结算日',
-                    dataIndex: 'settleDate',
-                    customRender: (v) => v || '-',
-                },
-                {
-                    title: '地址',
-                    dataIndex: 'address',
-                    customRender: (v) => v || '-',
-                },
-                {
-                    title: '大类',
-                    dataIndex: 'category',
-                    customRender: (v) => v || '-',
-                },
-                {
-                    title: '收益类型',
-                    dataIndex: 'reason',
-                    customRender: (v, row) => row.name || reasonType[v] || v || '-',
-                },
-                {
-                    title: '到账U',
-                    dataIndex: 'amount',
-                },
-                {
-                    title: '到账ISPAY',
-                    dataIndex: 'amountTwo',
-                },
-                {
-                    title: '入账账户',
-                    dataIndex: 'balanceName',
-                    customRender: (v) => v || '-',
-                },
-                {
-                    title: '来源订单',
-                    dataIndex: 'orderSource',
-                    customRender: (v, row) => {
-                        if (v) return v
-                        if (row.orderNo && row.orderAmount) return `${row.orderNo} / ${row.orderAmount}`
-                        return row.orderNo || '-'
-                    },
-                },
-                {
-                    title: '来源地址',
-                    dataIndex: 'sourceAddress',
-                    customRender: (v) => v || '-',
-                },
-                {
-                    title: '代数',
-                    dataIndex: 'num',
-                    customRender: (v) => v || '-',
-                },
-                {
-                    title: '明细',
-                    dataIndex: 'detail',
-                    customRender: (v, row) => v || row.remark || '-',
-                },
-            ],
             searchData: {
                 address: '',
                 reason: 'reward',
             },
         }
+    },
+    computed: {
+        tableColumns() {
+            const reason = this.searchData.reason
+            if (reason === 'freeze_asset') {
+                return [
+                    { title: '地址', dataIndex: 'address', customRender: dash },
+                    { title: '类型', dataIndex: 'name', customRender: dash },
+                    { title: '冻结U', dataIndex: 'amount' },
+                    { title: '冻结ISPAY', dataIndex: 'amountTwo' },
+                    { title: '到期', dataIndex: 'settleDate', customRender: dash },
+                    { title: '来源订单', dataIndex: 'orderSource', customRender: orderSource },
+                    { title: '明细', dataIndex: 'detail', customRender: (v, row) => v || row.remark || '-' },
+                ]
+            }
+            if (reason === 'freeze_release') {
+                return [
+                    { title: '时间', dataIndex: 'createdAt', customRender: dash },
+                    { title: '结算日', dataIndex: 'settleDate', customRender: dash },
+                    { title: '地址', dataIndex: 'address', customRender: dash },
+                    { title: '类型', dataIndex: 'name', customRender: dash },
+                    { title: 'USDT', dataIndex: 'amount' },
+                    { title: 'ISPAY', dataIndex: 'amountTwo' },
+                    { title: '来源订单', dataIndex: 'orderSource', customRender: orderSource },
+                    { title: '明细', dataIndex: 'detail', customRender: (v, row) => v || row.remark || '-' },
+                ]
+            }
+            return [
+                { title: '时间', dataIndex: 'createdAt' },
+                { title: '结算日', dataIndex: 'settleDate', customRender: dash },
+                { title: '地址', dataIndex: 'address', customRender: dash },
+                { title: '大类', dataIndex: 'category', customRender: dash },
+                { title: '收益类型', dataIndex: 'reason', customRender: (v, row) => row.name || reasonType[v] || v || '-' },
+                { title: '到账U', dataIndex: 'amount' },
+                { title: '到账ISPAY', dataIndex: 'amountTwo' },
+                { title: '入账账户', dataIndex: 'balanceName', customRender: dash },
+                { title: '来源订单', dataIndex: 'orderSource', customRender: orderSource },
+                { title: '来源地址', dataIndex: 'sourceAddress', customRender: dash },
+                { title: '代数', dataIndex: 'num', customRender: dash },
+                { title: '明细', dataIndex: 'detail', customRender: (v, row) => v || row.remark || '-' },
+            ]
+        },
     },
     methods: {
         getList() {

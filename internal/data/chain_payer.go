@@ -19,11 +19,14 @@ import (
 )
 
 type chainPayer struct {
-	rpc   *ethRPCClient
-	key   *secp256k1.PrivateKey
-	from  string
-	token string
-	mu    sync.Mutex
+	rpc        *ethRPCClient
+	key        *secp256k1.PrivateKey
+	from       string
+	usdt       string
+	ispay      string
+	decMu      sync.Mutex
+	decimalsOf map[string]int32
+	mu         sync.Mutex
 }
 
 func (p *chainPayer) FromAddress() string {
@@ -33,7 +36,7 @@ func (p *chainPayer) FromAddress() string {
 	return p.from
 }
 
-// NewChainPayer 热钱包 USDT 打款；未开打款或密钥/RPC 无效则 nil。
+// NewChainPayer 热钱包 ERC20 打款；未开打款或密钥/RPC/USDT 无效则 nil。
 func NewChainPayer(app *conf.App) biz.ChainPayer {
 	if app == nil || !app.PayoutEnabled {
 		return nil
@@ -52,14 +55,26 @@ func NewChainPayer(app *conf.App) biz.ChainPayer {
 		return nil
 	}
 	return &chainPayer{
-		rpc:   rpc,
-		key:   key,
-		from:  ethtx.AddressFromKey(key),
-		token: token,
+		rpc:        rpc,
+		key:        key,
+		from:       ethtx.AddressFromKey(key),
+		usdt:       token,
+		ispay:      wallet.NormalizeOrEmpty(app.IspayAddress),
+		decimalsOf: map[string]int32{},
 	}
 }
 
-func (p *chainPayer) TransferUSDT(ctx context.Context, to string, amount decimal.Decimal) (string, error) {
+func (p *chainPayer) tokenOf(asset string) string {
+	if p == nil {
+		return ""
+	}
+	if asset == biz.WithdrawAssetIspay {
+		return p.ispay
+	}
+	return p.usdt
+}
+
+func (p *chainPayer) Transfer(ctx context.Context, asset, to string, amount decimal.Decimal) (string, error) {
 	if p == nil || p.rpc == nil || p.key == nil {
 		return "", biz.ErrPayoutDisabled
 	}
@@ -69,11 +84,19 @@ func (p *chainPayer) TransferUSDT(ctx context.Context, to string, amount decimal
 	if to == "" {
 		return "", fmt.Errorf("invalid payout address")
 	}
-	rawAmt, err := ethtx.TokenRaw(amount, 18)
+	token := p.tokenOf(asset)
+	if token == "" {
+		return "", fmt.Errorf("token not configured")
+	}
+	decimals, err := p.tokenDecimals(ctx, token)
 	if err != nil {
 		return "", err
 	}
-	if err := p.ensureUSDT(ctx, rawAmt); err != nil {
+	rawAmt, err := ethtx.TokenRaw(amount, decimals)
+	if err != nil {
+		return "", err
+	}
+	if err := p.ensureToken(ctx, token, asset, rawAmt); err != nil {
 		return "", err
 	}
 	data, err := ethtx.ERC20TransferData(to, rawAmt)
@@ -93,13 +116,13 @@ func (p *chainPayer) TransferUSDT(ctx context.Context, to string, amount decimal
 		return "", err
 	}
 	gas := uint64(80000)
-	if g, err := p.rpc.estimateGas(ctx, p.from, p.token, data); err == nil && g > 21000 {
+	if g, err := p.rpc.estimateGas(ctx, p.from, token, data); err == nil && g > 21000 {
 		gas = g + g/5
 	}
 	if err := p.ensureBNB(ctx, gasPrice, gas); err != nil {
 		return "", err
 	}
-	raw, err := ethtx.SignLegacyTx(p.key, chainID, nonce, gasPrice, new(big.Int).SetUint64(gas), p.token, big.NewInt(0), data)
+	raw, err := ethtx.SignLegacyTx(p.key, chainID, nonce, gasPrice, new(big.Int).SetUint64(gas), token, big.NewInt(0), data)
 	if err != nil {
 		return "", err
 	}
@@ -193,12 +216,36 @@ func (c *ethRPCClient) estimateGas(ctx context.Context, from, to string, data []
 	return parseHexUint64(hexNum)
 }
 
-func (p *chainPayer) ensureUSDT(ctx context.Context, need *big.Int) error {
+func (p *chainPayer) tokenDecimals(ctx context.Context, token string) (int32, error) {
+	p.decMu.Lock()
+	if n, ok := p.decimalsOf[token]; ok {
+		p.decMu.Unlock()
+		return n, nil
+	}
+	p.decMu.Unlock()
+
+	raw, err := p.rpc.ethCallLatest(ctx, token, []byte{0x31, 0x3c, 0xe5, 0x67})
+	n := int32(18)
+	if err == nil {
+		if v, err2 := decodeABIUint256(raw); err2 == nil && v.IsInt64() {
+			d := v.Int64()
+			if d >= 0 && d <= 36 {
+				n = int32(d)
+			}
+		}
+	}
+	p.decMu.Lock()
+	p.decimalsOf[token] = n
+	p.decMu.Unlock()
+	return n, nil
+}
+
+func (p *chainPayer) ensureToken(ctx context.Context, token, asset string, need *big.Int) error {
 	data, err := ethtx.ERC20BalanceOfData(p.from)
 	if err != nil {
 		return err
 	}
-	raw, err := p.rpc.ethCallLatest(ctx, p.token, data)
+	raw, err := p.rpc.ethCallLatest(ctx, token, data)
 	if err != nil {
 		return err
 	}
@@ -207,6 +254,9 @@ func (p *chainPayer) ensureUSDT(ctx context.Context, need *big.Int) error {
 		return err
 	}
 	if bal.Cmp(need) < 0 {
+		if asset == biz.WithdrawAssetIspay {
+			return fmt.Errorf("hot wallet ISPAY insufficient")
+		}
 		return fmt.Errorf("hot wallet USDT insufficient")
 	}
 	return nil

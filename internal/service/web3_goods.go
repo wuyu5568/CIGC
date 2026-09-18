@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/cigc/app/internal/pkg/middleware/auth"
 	"github.com/cigc/app/internal/pkg/sanitize"
 	"github.com/cigc/app/internal/pkg/upload"
+	"github.com/shopspring/decimal"
 )
 
 func (s *AppService) uploadDir() string {
@@ -111,6 +113,58 @@ func (s *AppService) web3GoodsJSON(r *http.Request, p *biz.Package, withDetail b
 		out["contents"] = contents
 		out["english_complete"] = englishComplete
 	}
+	skus := p.SKUs
+	if auth.IsUser(r.Context()) {
+		filtered := make([]biz.PackageSKU, 0, len(skus))
+		for _, sku := range skus {
+			if sku.Enabled {
+				filtered = append(filtered, sku)
+			}
+		}
+		skus = filtered
+	}
+	out["skus"] = skuJSONList(r, skus, locale)
+	if auth.IsUser(r.Context()) && len(skus) > 0 {
+		minAmt, maxAmt := skus[0].Amount, skus[0].Amount
+		for _, sku := range skus[1:] {
+			if sku.Amount.LessThan(minAmt) {
+				minAmt = sku.Amount
+			}
+			if sku.Amount.GreaterThan(maxAmt) {
+				maxAmt = sku.Amount
+			}
+		}
+		out["amount"] = decStr(minAmt)
+		out["daily_cap"] = decStr(biz.CapForAmount(minAmt))
+		if !minAmt.Equal(maxAmt) {
+			out["amount_max"] = decStr(maxAmt)
+		}
+	}
+	return out
+}
+
+func skuJSONList(r *http.Request, skus []biz.PackageSKU, locale string) []map[string]any {
+	out := make([]map[string]any, 0, len(skus))
+	for _, sku := range skus {
+		name := strings.TrimSpace(sku.Name)
+		if locale == "en" && strings.TrimSpace(sku.NameEn) != "" {
+			name = strings.TrimSpace(sku.NameEn)
+		}
+		on := 0
+		if sku.Enabled {
+			on = 1
+		}
+		out = append(out, map[string]any{
+			"id":         sku.ID,
+			"name":       name,
+			"name_zh":    sku.Name,
+			"name_en":    sku.NameEn,
+			"amount":     decStr(sku.Amount),
+			"image":      upload.AbsoluteURL(upload.PublicBaseURL(r), sku.Image),
+			"enabled":    on,
+			"sort_order": sku.SortOrder,
+		})
+	}
 	return out
 }
 
@@ -132,6 +186,8 @@ func writeWeb3GoodsBiz(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "金额错误"})
 	case errors.Is(err, biz.ErrInvalidReleaseDays):
 		writeJSON(w, http.StatusOK, map[string]string{"status": "请选择释放天数"})
+	case errors.Is(err, biz.ErrSKUInvalid):
+		writeJSON(w, http.StatusOK, map[string]string{"status": "SKU 参数错误"})
 	default:
 		writeJSON(w, http.StatusOK, map[string]string{"status": "fail"})
 	}
@@ -186,10 +242,18 @@ func (s *AppService) AdminWeb3GoodsDetail(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "item": s.web3GoodsJSON(r, p, true)})
 }
 
+func writeWeb3GoodsReqErr(w http.ResponseWriter, err error) {
+	if errors.Is(err, biz.ErrSKUInvalid) || errors.Is(err, biz.ErrInvalidReleaseDays) || errors.Is(err, biz.ErrInvalidAmount) {
+		writeWeb3GoodsBiz(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "金额错误"})
+}
+
 func (s *AppService) AdminWeb3GoodsCreate(w http.ResponseWriter, r *http.Request) {
 	in, err := readWeb3GoodsReq(r)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "金额错误"})
+		writeWeb3GoodsReqErr(w, err)
 		return
 	}
 	p, err := s.orders.CreateWeb3Goods(r.Context(), &in.Web3GoodsInput)
@@ -203,7 +267,7 @@ func (s *AppService) AdminWeb3GoodsCreate(w http.ResponseWriter, r *http.Request
 func (s *AppService) AdminWeb3GoodsUpdate(w http.ResponseWriter, r *http.Request) {
 	in, err := readWeb3GoodsReq(r)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "金额错误"})
+		writeWeb3GoodsReqErr(w, err)
 		return
 	}
 	if in.ID == 0 {
@@ -221,7 +285,7 @@ func (s *AppService) AdminWeb3GoodsUpdate(w http.ResponseWriter, r *http.Request
 func (s *AppService) AdminWeb3GoodsStatus(w http.ResponseWriter, r *http.Request) {
 	in, err := readWeb3GoodsReq(r)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "金额错误"})
+		writeWeb3GoodsReqErr(w, err)
 		return
 	}
 	if in.ID == 0 {
@@ -243,7 +307,7 @@ func (s *AppService) AdminWeb3GoodsStatus(w http.ResponseWriter, r *http.Request
 func (s *AppService) AdminWeb3GoodsDelete(w http.ResponseWriter, r *http.Request) {
 	in, err := readWeb3GoodsReq(r)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "金额错误"})
+		writeWeb3GoodsReqErr(w, err)
 		return
 	}
 	if in.ID == 0 {
@@ -357,24 +421,20 @@ func readWeb3GoodsReq(r *http.Request) (*web3GoodsReq, error) {
 	ct := r.Header.Get("Content-Type")
 	if strings.Contains(ct, "json") {
 		var body struct {
-			ID       json.RawMessage `json:"id"`
-			Days     json.RawMessage `json:"days"`
-			Name     string          `json:"name"`
-			Title    string          `json:"title"`
-			Desc     string          `json:"desc"`
-			Goods    string          `json:"goods"`
-			Amount   json.RawMessage `json:"amount"`
-			DailyCap json.RawMessage `json:"daily_cap"`
-			Sort     json.RawMessage `json:"sort"`
-			OnSale   json.RawMessage `json:"on_sale"`
-			Image    json.RawMessage `json:"image"`
-			Detail   json.RawMessage `json:"detail"`
-			Contents map[string]struct {
-				Title  string `json:"title"`
-				Desc   string `json:"desc"`
-				Image  string `json:"image"`
-				Detail string `json:"detail"`
-			} `json:"contents"`
+			ID       json.RawMessage               `json:"id"`
+			Days     json.RawMessage               `json:"days"`
+			Name     string                        `json:"name"`
+			Title    string                        `json:"title"`
+			Desc     string                        `json:"desc"`
+			Goods    string                        `json:"goods"`
+			Amount   json.RawMessage               `json:"amount"`
+			DailyCap json.RawMessage               `json:"daily_cap"`
+			Sort     json.RawMessage               `json:"sort"`
+			OnSale   json.RawMessage               `json:"on_sale"`
+			Image    json.RawMessage               `json:"image"`
+			Detail   json.RawMessage               `json:"detail"`
+			Contents map[string]web3GoodsContentIn `json:"contents"`
+			SKUs     json.RawMessage               `json:"skus"`
 		}
 		if err := decodeJSON(r, &body); err != nil {
 			return nil, err
@@ -382,20 +442,7 @@ func readWeb3GoodsReq(r *http.Request) (*web3GoodsReq, error) {
 		in.ID, _ = strconv.ParseUint(strings.Trim(string(body.ID), `"`), 10, 64)
 		in.Name = firstNonEmpty(body.Name, body.Title)
 		in.Desc = firstNonEmpty(body.Desc, body.Goods)
-		if len(body.Contents) > 0 {
-			in.Contents = make(map[string]biz.PackageContent, len(body.Contents))
-			for locale, content := range body.Contents {
-				in.Contents[strings.ToLower(strings.TrimSpace(locale))] = biz.PackageContent{
-					Title: content.Title, GoodsDesc: content.Desc,
-					Image: upload.NormalizeStored(content.Image), Detail: content.Detail,
-				}
-			}
-			if zh, ok := in.Contents["zh"]; ok {
-				in.Name, in.Desc = zh.Title, zh.GoodsDesc
-				in.Image, in.Detail = zh.Image, zh.Detail
-				in.HasImage, in.HasDetail = true, true
-			}
-		}
+		applyWeb3GoodsContents(in, body.Contents)
 		if days := strings.Trim(string(body.Days), `"`); days != "" && days != "null" {
 			in.hasDays = true
 			if n, err := parseReleaseDays(days); err == nil {
@@ -436,6 +483,9 @@ func readWeb3GoodsReq(r *http.Request) (*web3GoodsReq, error) {
 		if s, ok := parseJSONString(body.Detail); ok {
 			in.HasDetail = true
 			in.Detail = s
+		}
+		if err := parseWeb3GoodsSKUs(in, body.SKUs); err != nil {
+			return nil, err
 		}
 		return in, nil
 	}
@@ -489,6 +539,10 @@ func readWeb3GoodsReq(r *http.Request) (*web3GoodsReq, error) {
 		in.HasOnSale = true
 		in.OnSale = parseOnSaleFlag(r.Form.Get("on_sale"))
 	}
+	applyWeb3GoodsFormContents(in, r.Form)
+	if err := parseWeb3GoodsFormSKUs(in, r.Form); err != nil {
+		return nil, err
+	}
 	if _, ok := r.Form["image"]; ok {
 		in.HasImage = true
 		in.Image = upload.NormalizeStored(r.Form.Get("image"))
@@ -498,6 +552,183 @@ func readWeb3GoodsReq(r *http.Request) (*web3GoodsReq, error) {
 		in.Detail = r.Form.Get("detail")
 	}
 	return in, nil
+}
+
+type web3GoodsContentIn struct {
+	Title  string `json:"title"`
+	Desc   string `json:"desc"`
+	Image  string `json:"image"`
+	Detail string `json:"detail"`
+}
+
+func applyWeb3GoodsContents(in *web3GoodsReq, contents map[string]web3GoodsContentIn) {
+	if in == nil || len(contents) == 0 {
+		return
+	}
+	in.Contents = make(map[string]biz.PackageContent, len(contents))
+	for locale, content := range contents {
+		in.Contents[strings.ToLower(strings.TrimSpace(locale))] = biz.PackageContent{
+			Title: content.Title, GoodsDesc: content.Desc,
+			Image: upload.NormalizeStored(content.Image), Detail: content.Detail,
+		}
+	}
+	if zh, ok := in.Contents["zh"]; ok {
+		in.Name, in.Desc = zh.Title, zh.GoodsDesc
+		in.Image, in.Detail = zh.Image, zh.Detail
+		in.HasImage, in.HasDetail = true, true
+	}
+}
+
+func applyWeb3GoodsFormContents(in *web3GoodsReq, form url.Values) {
+	if in == nil || form == nil {
+		return
+	}
+	raw := strings.TrimSpace(form.Get("contents"))
+	if strings.HasPrefix(raw, "{") {
+		var contents map[string]web3GoodsContentIn
+		if err := json.Unmarshal([]byte(raw), &contents); err == nil && len(contents) > 0 {
+			applyWeb3GoodsContents(in, contents)
+			return
+		}
+	}
+	contents := map[string]web3GoodsContentIn{}
+	for _, locale := range []string{"zh", "en"} {
+		prefix := "contents[" + locale + "]"
+		if !formHasPrefix(form, prefix) {
+			continue
+		}
+		contents[locale] = web3GoodsContentIn{
+			Title:  form.Get(prefix + "[title]"),
+			Desc:   form.Get(prefix + "[desc]"),
+			Image:  form.Get(prefix + "[image]"),
+			Detail: form.Get(prefix + "[detail]"),
+		}
+	}
+	applyWeb3GoodsContents(in, contents)
+}
+
+func parseWeb3GoodsFormSKUs(in *web3GoodsReq, form url.Values) error {
+	if in == nil || form == nil {
+		return nil
+	}
+	raw := strings.TrimSpace(form.Get("skus"))
+	if raw != "" && raw != "null" && (strings.HasPrefix(raw, "[") || strings.HasPrefix(raw, "{")) {
+		return parseWeb3GoodsSKUs(in, json.RawMessage(raw))
+	}
+	maxIdx := -1
+	for key := range form {
+		idx, ok := skuFormIndex(key)
+		if !ok {
+			continue
+		}
+		if idx > maxIdx {
+			maxIdx = idx
+		}
+	}
+	if maxIdx < 0 {
+		if _, ok := form["skus"]; ok {
+			in.HasSKUs = true
+			in.SKUs = []biz.PackageSKU{}
+		}
+		return nil
+	}
+	rows := make([]map[string]string, 0, maxIdx+1)
+	for i := 0; i <= maxIdx; i++ {
+		prefix := "skus[" + strconv.Itoa(i) + "]"
+		rows = append(rows, map[string]string{
+			"id":      form.Get(prefix + "[id]"),
+			"name":    form.Get(prefix + "[name]"),
+			"name_zh": form.Get(prefix + "[name_zh]"),
+			"name_en": form.Get(prefix + "[name_en]"),
+			"amount":  form.Get(prefix + "[amount]"),
+			"image":   form.Get(prefix + "[image]"),
+			"enabled": form.Get(prefix + "[enabled]"),
+		})
+	}
+	encoded, err := json.Marshal(rows)
+	if err != nil {
+		return biz.ErrSKUInvalid
+	}
+	return parseWeb3GoodsSKUs(in, encoded)
+}
+
+func skuFormIndex(key string) (int, bool) {
+	if !strings.HasPrefix(key, "skus[") {
+		return 0, false
+	}
+	rest := strings.TrimPrefix(key, "skus[")
+	end := strings.IndexByte(rest, ']')
+	if end <= 0 {
+		return 0, false
+	}
+	idx, err := strconv.Atoi(rest[:end])
+	if err != nil || idx < 0 {
+		return 0, false
+	}
+	return idx, true
+}
+
+func formHasPrefix(form url.Values, prefix string) bool {
+	if form == nil {
+		return false
+	}
+	if _, ok := form[prefix]; ok {
+		return true
+	}
+	for key := range form {
+		if strings.HasPrefix(key, prefix+"[") || key == prefix {
+			return true
+		}
+	}
+	return false
+}
+
+func parseWeb3GoodsSKUs(in *web3GoodsReq, raw json.RawMessage) error {
+	if in == nil || len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var rows []struct {
+		ID      json.RawMessage `json:"id"`
+		Name    string          `json:"name"`
+		NameZh  string          `json:"name_zh"`
+		NameEn  string          `json:"name_en"`
+		Amount  json.RawMessage `json:"amount"`
+		Image   json.RawMessage `json:"image"`
+		Enabled json.RawMessage `json:"enabled"`
+	}
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		return biz.ErrSKUInvalid
+	}
+	in.HasSKUs = true
+	in.SKUs = make([]biz.PackageSKU, 0, len(rows))
+	for _, row := range rows {
+		id, _ := strconv.ParseUint(strings.Trim(string(row.ID), `"`), 10, 64)
+		amt := decimal.Zero
+		if s := strings.Trim(string(row.Amount), `"`); s != "" && s != "null" {
+			d, err := parseAmount(s)
+			if err != nil {
+				return err
+			}
+			amt = d
+		}
+		enabled := true
+		if on := strings.Trim(string(row.Enabled), `"`); on != "" && on != "null" {
+			enabled = parseOnSaleFlag(on)
+		}
+		image := ""
+		if s, ok := parseJSONString(row.Image); ok {
+			image = upload.NormalizeStored(s)
+		}
+		in.SKUs = append(in.SKUs, biz.PackageSKU{
+			ID:      id,
+			Name:    firstNonEmpty(row.NameZh, row.Name),
+			NameEn:  row.NameEn,
+			Amount:  amt,
+			Image:   image,
+			Enabled: enabled,
+		})
+	}
+	return nil
 }
 
 func parseJSONString(raw json.RawMessage) (string, bool) {

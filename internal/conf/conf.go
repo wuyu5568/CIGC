@@ -55,6 +55,7 @@ type App struct {
 	PayoutCron           string         `yaml:"payout_cron"`
 	BscRPC               string         `yaml:"bsc_rpc"`
 	UsdtAddress          string         `yaml:"usdt_address"`
+	IspayAddress         string         `yaml:"ispay_address"`
 	BuyContract          string         `yaml:"buy_contract"`
 	ReceiveAddress       string         `yaml:"receive_address"`
 	ReceiveAddresses     []ReceiveShare `yaml:"receive_addresses"`
@@ -62,6 +63,7 @@ type App struct {
 	DepositConfirmations int            `yaml:"deposit_confirmations"`
 	HotWalletKey         string         `yaml:"hot_wallet_key"`
 	PayoutMaxUSDT        float64        `yaml:"-"`
+	PayoutMaxIspay       float64        `yaml:"-"`
 	UploadDir            string         `yaml:"upload_dir"`
 }
 
@@ -87,7 +89,9 @@ const (
 	EnvHotWalletKey         = "CIGC_HOT_WALLET_KEY"
 	EnvBscRPC               = "CIGC_BSC_RPC"
 	EnvPayoutMaxUSDT        = "CIGC_PAYOUT_MAX_USDT"
+	EnvPayoutMaxIspay       = "CIGC_PAYOUT_MAX_ISPAY"
 	EnvUSDTAddress          = "CIGC_USDT_ADDRESS"
+	EnvIspayAddress         = "CIGC_ISPAY_ADDRESS"
 	EnvBuyContract          = "CIGC_BUY_CONTRACT"
 	EnvReceiveAddress       = "CIGC_RECEIVE_ADDRESS"
 	EnvReceiveAddresses     = "CIGC_RECEIVE_ADDRESSES"
@@ -214,7 +218,7 @@ func applyEnvOverrides(bc *Bootstrap) {
 		bc.App.GenesisAddress = v
 	}
 	if v := strings.TrimSpace(os.Getenv(EnvSettleCron)); v != "" {
-		bc.App.SettleCron = v
+		bc.App.SettleCron = stripCronExpr(v)
 	}
 	if v := strings.TrimSpace(os.Getenv(EnvSettleTimezone)); v != "" {
 		bc.App.SettleTimezone = v
@@ -234,6 +238,9 @@ func applyEnvOverrides(bc *Bootstrap) {
 	if v := strings.TrimSpace(os.Getenv(EnvUSDTAddress)); v != "" {
 		bc.App.UsdtAddress = v
 	}
+	if v := strings.TrimSpace(os.Getenv(EnvIspayAddress)); v != "" {
+		bc.App.IspayAddress = v
+	}
 	if v := strings.TrimSpace(os.Getenv(EnvBuyContract)); v != "" {
 		bc.App.BuyContract = v
 	}
@@ -247,7 +254,7 @@ func applyEnvOverrides(bc *Bootstrap) {
 		}
 	}
 	if v := strings.TrimSpace(os.Getenv(EnvDepositCron)); v != "" {
-		bc.App.DepositCron = v
+		bc.App.DepositCron = stripCronExpr(v)
 	}
 	if v := strings.TrimSpace(os.Getenv(EnvDepositConfirmations)); v != "" {
 		n, err := strconv.Atoi(v)
@@ -259,12 +266,18 @@ func applyEnvOverrides(bc *Bootstrap) {
 		bc.App.PayoutEnabled = envTruthy(v)
 	}
 	if v := strings.TrimSpace(os.Getenv(EnvPayoutCron)); v != "" {
-		bc.App.PayoutCron = v
+		bc.App.PayoutCron = stripCronExpr(v)
 	}
 	if v := strings.TrimSpace(os.Getenv(EnvPayoutMaxUSDT)); v != "" {
 		f, err := strconv.ParseFloat(v, 64)
 		if err == nil && f > 0 {
 			bc.App.PayoutMaxUSDT = f
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv(EnvPayoutMaxIspay)); v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		if err == nil && f > 0 {
+			bc.App.PayoutMaxIspay = f
 		}
 	}
 	if v := strings.TrimSpace(os.Getenv(EnvUploadDir)); v != "" {
@@ -279,4 +292,15 @@ func envTruthy(v string) bool {
 	default:
 		return false
 	}
+}
+
+// stripCronExpr 去掉 docker compose 默认值里带进来的引号，例如 `"* * * * *"`。
+func stripCronExpr(v string) string {
+	v = strings.TrimSpace(v)
+	if len(v) >= 2 {
+		if (v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'') {
+			return strings.TrimSpace(v[1 : len(v)-1])
+		}
+	}
+	return v
 }

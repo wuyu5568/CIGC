@@ -4,8 +4,8 @@
       <div class="dialog-main">
         <div class="dialog-title">{{ lang('购买') }}：{{ fmt(totalAmount) }} USDT</div>
         <ul class="cart-lines" v-if="lines.length > 1 || (lines[0] && lines[0].qty > 1)">
-          <li v-for="line in lines" :key="line.id">
-            <span>{{ line.name || (lang('商品') + ' #' + line.id) }} × {{ line.qty }}</span>
+          <li v-for="line in lines" :key="line.id + '-' + (line.sku_id || 0)">
+            <span>{{ line.name || (lang('商品') + ' #' + line.id) }}<em v-if="line.sku_name"> / {{ line.sku_name }}</em> × {{ line.qty }}</span>
             <em>{{ fmt(Number(line.amount) * line.qty) }} USDT</em>
           </li>
         </ul>
@@ -75,7 +75,9 @@ const lines = $computed(() => {
     return props.items
       .map((x) => ({
         id: Number(x.id),
+        sku_id: Number(x.sku_id) || 0,
         name: x.name || x.desc || '',
+        sku_name: x.sku_name || '',
         amount: String(x.amount || '0'),
         qty: Math.max(1, Number(x.qty) || 1)
       }))
@@ -91,7 +93,11 @@ const lines = $computed(() => {
 const buyPayload = $computed(() => {
   if (Array.isArray(props.items) && props.items.length) {
     return {
-      items: lines.map((x) => ({ id: x.id, qty: x.qty })),
+      items: lines.map((x) => {
+        const row = { id: x.id, qty: x.qty }
+        if (x.sku_id) row.sku_id = x.sku_id
+        return row
+      }),
       days,
       release_days: days
     }

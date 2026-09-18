@@ -78,8 +78,12 @@ func TestNormalizeConfigValue(t *testing.T) {
 	if err != nil || v != "1" {
 		t.Fatalf("switch 1: %s %v", v, err)
 	}
-	if _, err := NormalizeConfigValue(ConfigWithdrawEnabled, "2"); err != ErrConfigInvalid {
-		t.Fatalf("switch 2: %v", err)
+	v, err = NormalizeConfigValue(ConfigPayoutMaxIspay, "1000")
+	if err != nil || v != "1000" {
+		t.Fatalf("payout max ispay: %s %v", v, err)
+	}
+	if _, err := NormalizeConfigValue(ConfigPayoutMaxIspay, "0"); err != ErrConfigInvalid {
+		t.Fatalf("payout max 0: %v", err)
 	}
 }
 

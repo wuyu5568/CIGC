@@ -2,10 +2,11 @@
     <PageView>
         <a-card title="提现审核">
             <div class="payout-bar">
-                <span>USDT 申请后直接进打款队列，每分钟自动打款。ISPAY 仍需审核。</span>
+                <span>USDT / ISPAY 申请后直接进打款队列，每分钟自动打款。遗留待审 ISPAY 仍需点通过。</span>
                 <span>打款：{{ payoutEnabled ? '已开启' : '未开启' }}</span>
                 <span v-if="hotWallet">热钱包：{{ hotWallet }}</span>
-                <span v-if="payoutMaxUsdt">单笔上限：{{ payoutMaxUsdt }} USDT</span>
+                <span v-if="payoutMaxUsdt">USDT 单笔上限：{{ payoutMaxUsdt }}</span>
+                <span v-if="payoutMaxIspay">ISPAY 单笔上限：{{ payoutMaxIspay }}</span>
                 <a-button type="primary" :disabled="!payoutEnabled" :loading="payoutLoading" @click="payoutAll">处理打款队列</a-button>
             </div>
             <a-row :gutter="10" class="inputGroup">
@@ -64,6 +65,7 @@ export default {
             payoutEnabled: false,
             hotWallet: '',
             payoutMaxUsdt: '',
+            payoutMaxIspay: '',
             payoutLoading: false,
             columns: [
                 {
@@ -119,7 +121,7 @@ export default {
                             btns.push(<a-button type="primary" size="small" onClick={() => this.pass(v.id)}>通过</a-button>)
                             btns.push(<a-button size="small" onClick={() => this.reject(v.id)}>拒绝</a-button>)
                         }
-                        if ((v.status === 'rewarded' || v.status === 'doing') && v.asset !== 'ispay') {
+                        if ((v.status === 'rewarded' || v.status === 'doing') && (v.asset === 'ispay' || v.asset === 'usdt' || !v.asset)) {
                             btns.push(<a-button type="primary" size="small" disabled={!this.payoutEnabled} onClick={() => this.payoutOne(v.id)}>打款</a-button>)
                         }
                         if (!btns.length) return ''
@@ -147,6 +149,7 @@ export default {
                 this.payoutEnabled = !!res.payoutEnabled
                 this.hotWallet = res.hotWallet || ''
                 this.payoutMaxUsdt = res.payoutMaxUsdt || ''
+                this.payoutMaxIspay = res.payoutMaxIspay || ''
                 this.loading = false
                 this.total = parseInt(res.count)
             }).catch(() => {
@@ -182,7 +185,7 @@ export default {
         payoutOne(id) {
             this.$confirm({
                 title: '打款提示',
-                content: '将用热钱包向该用户地址打 USDT，确定继续？',
+                content: '将用热钱包向该用户地址打对应代币，确定继续？',
                 centered: true,
                 onOk: () => this.runPayout({ id })
             })
@@ -190,7 +193,7 @@ export default {
         payoutAll() {
             this.$confirm({
                 title: '打款队列',
-                content: '处理当前已通过/打款中的 USDT 提现，确定继续？',
+                content: '处理当前已通过/打款中的 USDT 与 ISPAY 提现，确定继续？',
                 centered: true,
                 onOk: () => this.runPayout({})
             })

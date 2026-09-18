@@ -22,6 +22,7 @@ app:
   payout_cron: "* * * * *"
   bsc_rpc: "https://bsc-dataseed.binance.org/"
   usdt_address: "0x55d398326f99059fF775485246999027B3197955"
+  ispay_address: "0xBF9b0594E110C381F2606961C78641a194999999"
   buy_contract: "0x162bfFAcf7a89Bb6EbA05972C1DE0E1e97617c18"
   receive_address: ""
   receive_addresses:

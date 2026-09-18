@@ -376,5 +376,13 @@
   "购物车": "Cart",
   "去结算": "Checkout",
   "购物车为空": "Cart is empty",
-  "清空": "Clear"
+  "清空": "Clear",
+  "规格": "Spec",
+  "请选择规格": "Please select a spec",
+  "选择规格": "Select spec",
+  "已加入购物车": "Added to cart",
+  "联系方式": "Contact",
+  "请填写联系方式": "Enter contact",
+  "请填写地址": "Enter address",
+  "去填写": "Fill in"
 }

@@ -42,15 +42,18 @@
             <div class="card-foot">
               <div class="card-price">
                 <span class="detail-label">{{ lang('单价') }}：</span>
-                <span class="detail-value">{{ fmt(item.amount) }} USDT</span>
+                <span class="detail-value">{{ fmt(priceOf(item).min) }}<span v-if="priceOf(item).max"> ~ {{ fmt(priceOf(item).max) }}</span> USDT</span>
               </div>
               <div class="cart-actions" @click.stop>
-                <div class="qty-box compact" v-if="qtyOf(item.id) > 0">
-                  <button type="button" class="qty-btn" @click="changeQty(item, -1)">−</button>
-                  <span class="qty-num">{{ qtyOf(item.id) }}</span>
-                  <button type="button" class="qty-btn" @click="changeQty(item, 1)">+</button>
-                </div>
-                <button v-else type="button" class="purchase-btn" :disabled="loading" @click="addToCart(item)">{{ lang('加入购物车') }}</button>
+                <button v-if="needSku(item)" type="button" class="purchase-btn" :disabled="loading" @click="openDetail(item)">{{ lang('选择规格') }}</button>
+                <template v-else>
+                  <div class="qty-box compact" v-if="qtyOf(item.id) > 0">
+                    <button type="button" class="qty-btn" @click="changeQty(item, -1)">−</button>
+                    <span class="qty-num">{{ qtyOf(item.id) }}</span>
+                    <button type="button" class="qty-btn" @click="changeQty(item, 1)">+</button>
+                  </div>
+                  <button v-else type="button" class="purchase-btn" :disabled="loading" @click="addToCart(item)">{{ lang('加入购物车') }}</button>
+                </template>
               </div>
             </div>
           </div>
@@ -91,10 +94,10 @@
         <span>{{ lang('购物车') }}</span>
         <button type="button" class="sheet-clear" @click="clearCart">{{ lang('清空') }}</button>
       </div>
-      <div class="sheet-line" v-for="row in cart" :key="row.id">
+      <div class="sheet-line" v-for="row in cart" :key="lineKey(row)">
         <img v-if="row.image" :src="row.image" alt="" />
         <div class="sheet-info">
-          <div class="sheet-name">{{ row.name }}</div>
+          <div class="sheet-name">{{ row.name }}<em v-if="row.sku_name"> / {{ row.sku_name }}</em></div>
           <div class="sheet-amt">{{ fmt(row.amount) }} USDT</div>
         </div>
         <div class="qty-box compact">
@@ -127,22 +130,13 @@ import { onBeforeUnmount } from 'vue'
 import userPerson from "@/pinia/person";
 import lang from '@/i18n/index'
 import request from "@/tools/request";
-import { Pagination, showFailToast } from "vant";
+import { Pagination, showFailToast, showConfirmDialog } from "vant";
 import { useRouter } from 'vue-router'
 import { displayAmount } from '@/tools/amount'
 import { capForAmount, rangeForAmount, loadCapTiers, currentCapTiers } from '@/tools/dailyCap'
 import Web3BuyModal from './components/web3BuyModal.vue'
-
-const CART_KEY = 'web3_shop_cart'
-
-const readCart = () => {
-  try {
-    const raw = JSON.parse(sessionStorage.getItem(CART_KEY) || '[]')
-    return Array.isArray(raw) ? raw.filter((x) => x && x.id) : []
-  } catch {
-    return []
-  }
-}
+import { readCart, persistCart as saveCart, hasSKUs, goodsAmountRange, changeCartQty, refreshCartRow, cartLineKey } from '@/tools/web3Cart'
+import { shippingComplete } from '@/tools/shipping'
 
 const pageSize = 10
 
@@ -193,9 +187,9 @@ const fetchList = async () => {
         const fresh = list.find((item) => Number(item.id) === Number(row.id))
         if (!fresh) return row
         cartChanged = true
-        return { ...row, ...snapshotItem(fresh), qty: row.qty }
+        return refreshCartRow(row, fresh)
       })
-      if (cartChanged) persistCart()
+      if (cartChanged) saveCart(cart)
     } else {
       list = []
       total = 0
@@ -223,28 +217,24 @@ const openDetail = (item) => {
   router.push('/Web3Shop/' + id).catch(() => {})
 }
 
-const persistCart = () => {
-  try {
-    sessionStorage.setItem(CART_KEY, JSON.stringify(cart))
-  } catch {}
-}
+const persistCart = () => saveCart(cart)
+
+const needSku = (item) => hasSKUs(item)
+const priceOf = (item) => goodsAmountRange(item)
+const lineKey = (row) => cartLineKey(row)
 
 const qtyOf = (id) => {
-  const row = cart.find((x) => Number(x.id) === Number(id))
+  const row = cart.find((x) => Number(x.id) === Number(id) && !Number(x.sku_id))
   return row ? Number(row.qty) || 0 : 0
 }
-
-const snapshotItem = (item) => ({
-  id: Number(item.id),
-  name: item.name || item.desc || '',
-  image: item.image || '',
-  amount: String(item.amount || ''),
-  qty: 1
-})
 
 const addToCart = (item) => {
   if (!item?.id) {
     showFailToast(lang('商品信息错误'))
+    return
+  }
+  if (needSku(item)) {
+    openDetail(item)
     return
   }
   changeQty(item, 1)
@@ -252,17 +242,7 @@ const addToCart = (item) => {
 
 const changeQty = (item, delta) => {
   if (!item?.id) return
-  const id = Number(item.id)
-  const next = cart.map((x) => ({ ...x }))
-  const i = next.findIndex((x) => Number(x.id) === id)
-  if (i < 0) {
-    if (delta <= 0) return
-    next.push({ ...snapshotItem(item), qty: delta })
-  } else {
-    next[i].qty = (Number(next[i].qty) || 0) + delta
-    if (next[i].qty <= 0) next.splice(i, 1)
-  }
-  cart = next
+  cart = changeCartQty(cart, item, delta)
   persistCart()
 }
 
@@ -272,9 +252,30 @@ const clearCart = () => {
   cartOpen = false
 }
 
-const openCheckout = () => {
+const openCheckout = async () => {
   if (!cart.length) {
     showFailToast(lang('购物车为空'))
+    return
+  }
+  let ok = shippingComplete(userinfo.shippingAddress)
+  if (!ok) {
+    try {
+      const res = await request.get('app_server/shipping_address')
+      ok = shippingComplete(res)
+    } catch {
+      ok = false
+    }
+  }
+  if (!ok) {
+    cartOpen = false
+    showConfirmDialog({
+      message: lang('请先填写收货地址'),
+      confirmButtonText: lang('去填写'),
+      cancelButtonText: lang('取消'),
+      theme: 'round-button',
+    }).then(() => {
+      router.push({ path: '/address', query: { from: 'checkout' } })
+    }).catch(() => {})
     return
   }
   cartOpen = false
@@ -598,6 +599,11 @@ loadCapTiers(request).then((rows) => {
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+        em {
+          font-style: normal;
+          color: #cab255;
+          font-weight: 500;
+        }
       }
       .sheet-amt {
         margin-top: 4px;

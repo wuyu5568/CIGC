@@ -207,3 +207,51 @@ func TestSortWeb3GoodsReordersAndLists(t *testing.T) {
 		t.Fatalf("append new %+v err=%v", all, err)
 	}
 }
+
+func TestCreateAndUpdateWeb3GoodsSKUs(t *testing.T) {
+	pkgs := &memPackages{}
+	uc := NewOrderUseCase(pkgs, newMemOrders(newMemUsers()), newMemUsers(), newMemUsers(), &memLedger{})
+	got, err := uc.CreateWeb3Goods(context.Background(), &Web3GoodsInput{
+		Name: "牙刷", Amount: decimal.RequireFromString("1000"),
+		HasSKUs: true,
+		SKUs: []PackageSKU{
+			{Name: "白色", Amount: decimal.RequireFromString("800"), Image: "/uploads/sku-white.png", Enabled: true},
+			{NameEn: "Black", Amount: decimal.RequireFromString("1200"), Enabled: true},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.SKUs) != 2 || got.SKUs[0].ID == 0 || got.SKUs[0].Name != "白色" || got.SKUs[0].Image != "/uploads/sku-white.png" || got.SKUs[1].Name != "Black" {
+		t.Fatalf("create skus %+v", got.SKUs)
+	}
+	skuID := got.SKUs[0].ID
+	kept, err := uc.UpdateWeb3Goods(context.Background(), &Web3GoodsInput{
+		ID: got.ID, Name: "牙刷", Amount: decimal.RequireFromString("1000"),
+	})
+	if err != nil || len(kept.SKUs) != 2 || kept.SKUs[0].ID != skuID || kept.SKUs[0].Image != "/uploads/sku-white.png" {
+		t.Fatalf("keep skus %+v err=%v", kept, err)
+	}
+	updated, err := uc.UpdateWeb3Goods(context.Background(), &Web3GoodsInput{
+		ID: got.ID, Name: "牙刷", Amount: decimal.RequireFromString("1000"),
+		HasSKUs: true,
+		SKUs: []PackageSKU{
+			{ID: skuID, Name: "白色升级", Amount: decimal.RequireFromString("900"), Image: "/uploads/sku-white2.png", Enabled: true},
+		},
+	})
+	if err != nil || len(updated.SKUs) != 1 || updated.SKUs[0].ID != skuID || updated.SKUs[0].Name != "白色升级" || updated.SKUs[0].Image != "/uploads/sku-white2.png" {
+		t.Fatalf("replace skus %+v err=%v", updated, err)
+	}
+	cleared, err := uc.UpdateWeb3Goods(context.Background(), &Web3GoodsInput{
+		ID: got.ID, Name: "牙刷", Amount: decimal.RequireFromString("1000"), HasSKUs: true,
+	})
+	if err != nil || len(cleared.SKUs) != 0 {
+		t.Fatalf("clear skus %+v err=%v", cleared, err)
+	}
+	if _, err := uc.CreateWeb3Goods(context.Background(), &Web3GoodsInput{
+		Name: "坏规格", Amount: decimal.RequireFromString("1000"), HasSKUs: true,
+		SKUs: []PackageSKU{{Amount: decimal.RequireFromString("800"), Enabled: true}},
+	}); err != ErrSKUInvalid {
+		t.Fatalf("blank sku name: %v", err)
+	}
+}

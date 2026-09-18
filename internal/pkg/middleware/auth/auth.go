@@ -99,7 +99,7 @@ func RequireAdminJWT(jwtKey string, next http.HandlerFunc) http.HandlerFunc {
 		}
 		tokenStr := strings.TrimPrefix(authz, "Bearer ")
 		if !parseBearerAdmin(tokenStr, key) {
-			http.Error(w, `{"message":"forbidden"}`, http.StatusForbidden)
+			http.Error(w, `{"message":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
 		next(w, r)

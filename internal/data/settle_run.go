@@ -103,6 +103,18 @@ func isForeignKey(err error) bool {
 	return strings.Contains(msg, "foreign key") || strings.Contains(msg, "1451")
 }
 
+func isMissingTable(err error) bool {
+	if err == nil {
+		return false
+	}
+	var mysqlErr *mysql.MySQLError
+	if errors.As(err, &mysqlErr) && mysqlErr.Number == 1146 {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "Error 1146") || strings.Contains(msg, "1146 (42S02)")
+}
+
 func (r *settleRunRepo) DeleteAfter(ctx context.Context, after time.Time) (int, error) {
 	day := after.Format("2006-01-02")
 	res := r.data.db.WithContext(ctx).Where("settle_date > ?", day).Delete(&SettleRunModel{})

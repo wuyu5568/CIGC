@@ -423,3 +423,50 @@ func TestListUserFreezeAssets(t *testing.T) {
 		t.Fatalf("expire=%s", items[1].SettleDate)
 	}
 }
+
+func TestListAdminFreezeAssets(t *testing.T) {
+	users := newMemUsers()
+	a, err := users.Create(context.Background(), &User{Address: "0xaaa"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := users.Create(context.Background(), &User{Address: "0xbbb"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := users.AddLockBalance(context.Background(), a.ID, decimal.RequireFromString("100")); err != nil {
+		t.Fatal(err)
+	}
+	if err := users.AddLockIspay(context.Background(), a.ID, decimal.RequireFromString("0.05")); err != nil {
+		t.Fatal(err)
+	}
+	if err := users.AddLockBalance(context.Background(), b.ID, decimal.RequireFromString("20")); err != nil {
+		t.Fatal(err)
+	}
+	daily := newMemDailyCap()
+	exp := time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC)
+	if err := daily.CreateHold(context.Background(), &CapOverflowHold{
+		UserID: a.ID, Value: decimal.RequireFromString("40"), USDT: decimal.RequireFromString("40"),
+		Ispay: decimal.RequireFromString("0.02"), SourceType: LedgerDirect, ExpiresAt: &exp,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	uc := NewSettleUseCase(users, nil, nil, nil, users, &memLedger{}, nil, nil, nil, daily, NopTx{}, &conf.App{SettleTimezone: "Asia/Shanghai"})
+	page, err := uc.ListAdminFreezeAssets(context.Background(), "", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 3 {
+		t.Fatalf("all total=%d %+v", page.Total, page.Items)
+	}
+	onlyA, err := uc.ListAdminFreezeAssets(context.Background(), "0xaaa", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if onlyA.Total != 2 || onlyA.Items[0].Address != "0xaaa" || onlyA.Items[0].Reason != "freeze_pending" {
+		t.Fatalf("filter A %+v", onlyA)
+	}
+	if onlyA.Items[1].Name != "直推冻结" || onlyA.Items[1].Amount != "40" {
+		t.Fatalf("hold %+v", onlyA.Items[1])
+	}
+}

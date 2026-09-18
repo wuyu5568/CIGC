@@ -2,7 +2,7 @@
     <PageView>
         <a-card title="日封顶档位">
             <div class="toolbar">
-                <span class="hint">每一档是一个金额区间：合计落在该区间内，就用这一行的日封顶。最后一档没有上限。保存后立刻影响结算和商城展示。</span>
+                <span class="hint">每一档是一个金额区间：填写该档上限后，列表按上限金额从小到大排列。最后一档没有上限。保存后立刻影响结算和商城展示。</span>
                 <div>
                     <a-button @click="addRow">添加档位</a-button>
                     <a-button type="primary" :loading="saving" style="margin-left:8px;" @click="save">保存</a-button>
@@ -89,8 +89,7 @@ export default {
                     title: '金额区间',
                     customRender: (v, row, index) => {
                         const from = prevMax(this.rows, index)
-                        const unbounded = !String(row.max_amount || '').trim()
-                        if (unbounded) {
+                        if (this.isOpenEnded(index)) {
                             return <span>{from} 及以上</span>
                         }
                         return (
@@ -98,9 +97,10 @@ export default {
                                 <span style="margin-right:8px;">{from} ≤ 金额 &lt;</span>
                                 <a-input
                                     value={row.max_amount}
-                                    placeholder="上限"
+                                    placeholder="填写上限"
                                     style="width:140px"
                                     onInput={(e) => this.setField(index, 'max_amount', e.target.value)}
+                                    onBlur={() => this.sortRows()}
                                 />
                             </div>
                         )
@@ -140,19 +140,47 @@ export default {
         this.getList()
     },
     methods: {
+        isOpenEnded(index) {
+            return index === this.rows.length - 1
+        },
         setField(index, field, value) {
             if (!this.rows[index]) return
             this.$set(this.rows[index], field, value)
         },
-        rowKey(i) {
-            return `cap-${i}-${Date.now()}`
+        rowKey() {
+            return `cap-${Date.now()}-${Math.random().toString(16).slice(2)}`
         },
         mapRows(tiers) {
-            return (tiers || []).map((row, i) => ({
+            const rows = (tiers || []).map((row, i) => ({
                 key: `cap-${i}-${row.max_amount}-${row.daily_cap}`,
                 max_amount: row.max_amount == null ? '' : String(row.max_amount),
                 daily_cap: row.daily_cap == null ? '' : String(row.daily_cap),
             }))
+            return this.sortedRows(rows)
+        },
+        amountValue(row) {
+            const raw = trimNum(row && row.max_amount)
+            if (!raw) return null
+            const n = Number(raw)
+            return Number.isFinite(n) ? n : null
+        },
+        sortedRows(list) {
+            const rows = Array.isArray(list) ? list.slice() : []
+            if (rows.length <= 1) return rows
+            const open = rows[rows.length - 1]
+            const bounded = rows.slice(0, -1)
+            bounded.sort((a, b) => {
+                const av = this.amountValue(a)
+                const bv = this.amountValue(b)
+                if (av == null && bv == null) return 0
+                if (av == null) return 1
+                if (bv == null) return -1
+                return av - bv
+            })
+            return bounded.concat(open)
+        },
+        sortRows() {
+            this.rows = this.sortedRows(this.rows)
         },
         getList() {
             this.loading = true
@@ -164,13 +192,17 @@ export default {
             })
         },
         addRow() {
-            const row = { key: this.rowKey(this.rows.length), max_amount: '', daily_cap: '' }
-            const last = this.rows[this.rows.length - 1]
-            if (last && !String(last.max_amount || '').trim()) {
+            if (this.rows.length >= 20) {
+                this.$message.warning('最多 20 档')
+                return
+            }
+            const row = { key: this.rowKey(), max_amount: '', daily_cap: '' }
+            if (this.rows.length) {
                 this.rows.splice(this.rows.length - 1, 0, row)
             } else {
                 this.rows.push(row)
             }
+            this.sortRows()
         },
         removeRow(index) {
             if (this.rows.length <= 1) {
@@ -178,10 +210,12 @@ export default {
                 return
             }
             this.rows.splice(index, 1)
+            this.sortRows()
         },
         save() {
-            const tiers = this.rows.map((row) => ({
-                max_amount: String(row.max_amount || '').trim(),
+            this.sortRows()
+            const tiers = this.rows.map((row, i) => ({
+                max_amount: this.isOpenEnded(i) ? '' : String(row.max_amount || '').trim(),
                 daily_cap: String(row.daily_cap || '').trim(),
             }))
             this.saving = true

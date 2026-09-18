@@ -6,7 +6,7 @@
         <a-input-number style="width: 100%" v-model:value="amount" :max="Number(balance || 0)" size="large" :placeholder="lang('请输入数量')" />
         <div class="dialog-info">
         <p><QuestionCircleOutlined style="margin-right: 5px" />{{ lang('最小提现数量') }}: {{ fmt(minAmount) }}</p>
-        <p>{{lang('手续费')}}：{{ isUsdt ? fmt(fee) : 0 }}</p>
+        <p>{{lang('手续费')}}：{{ fmt(fee) }}</p>
         </div>
       </div>
       <a-button class="withdraw-btn" :disabled="loading" size="large" @click="handleWithdrawal" type="primary">{{lang('提现')}}</a-button>
@@ -30,10 +30,10 @@ const type = $ref('USDT')
 const loading = $ref(false)
 const isUsdt = $computed(() => type === 'USDT')
 const balance = $computed(() => isUsdt ? userinfo.usdt : (userinfo.ispay || userinfo.ispayAmount || 0))
-const minAmount = $computed(() => isUsdt ? (userinfo.withdrawMin || 0) : 0)
+const minAmount = $computed(() => isUsdt ? (userinfo.withdrawMin || 0) : (userinfo.withdrawMinTwo || 0))
 const fee = $computed(() => {
-  if (!isUsdt) return 0
-  return Number(userinfo.withdrawRate || 0) * Number(amount || 0)
+  const rate = isUsdt ? userinfo.withdrawRate : userinfo.withdrawRateTwo
+  return Number(rate || 0) * Number(amount || 0)
 })
 const fmt = (v) => displayAmount(v)
 
@@ -56,7 +56,7 @@ const handleWithdrawal = async () => {
     loading = false
     return showToast(lang('请输入金额'))
   }
-  if (isUsdt && Number(amount) < Number(minAmount || 0)) {
+  if (Number(amount) < Number(minAmount || 0)) {
     loading = false
     return showToast(lang('提现数量不能小于最小提现数量'))
   }

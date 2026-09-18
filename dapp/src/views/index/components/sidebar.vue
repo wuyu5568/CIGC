@@ -13,9 +13,10 @@
     <li @click="router.push('wallet')"><i class="nav-icon-5" />{{ lang('我的资产') }}</li>
     <!-- <li @click="router.push('level')"><i class="nav-icon-6" />{{ lang('等级权益') }}</li> -->
     <li @click="router.push('community')"><i class="nav-icon-7" />{{ lang('我的团队') }}</li>
-    <li @click="openLink('https://www.playgamefrane.com/game/')"><i class="nav-icon-8" />{{ lang('魔晶农场') }}</li>
+    <li @click="openLink('https://www.ppflsc.com/game/')"><i class="nav-icon-8" />{{ lang('魔晶农场') }}</li>
     <li @click="showToast(lang('暂未开通'))"><i class="nav-icon-9" />{{ lang('资产跨链') }}</li>
     <li @click="showToast(lang('暂未开通'))"><i class="nav-icon-10" />{{ lang('主网钱包') }}</li>
+    <li @click="router.push('address')"><i class="nav-icon-11" />{{ lang('收货地址') }}</li>
   </ul>
 </div>
 </template>

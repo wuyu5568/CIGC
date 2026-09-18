@@ -59,6 +59,7 @@ type LedgerRepo interface {
 	Create(ctx context.Context, e *LedgerEntry) error
 	ListByUser(ctx context.Context, userID uint64, from, to time.Time) ([]*LedgerEntry, error)
 	ListPaged(ctx context.Context, address string, entryTypes []string, page, pageSize int) ([]*LedgerEntry, int, error)
+	ListByTypes(ctx context.Context, address string, entryTypes []string) ([]*LedgerEntry, error)
 	FindMatching(ctx context.Context, userID uint64, entryType string, orderID *uint64, settleDate *time.Time, remark string) (*LedgerEntry, error)
 	ExistsByOrderAndType(ctx context.Context, orderID uint64, entryType string) (bool, error)
 	ExistsByOrderTypeAndDate(ctx context.Context, orderID uint64, entryType string, settleDate time.Time) (bool, error)
@@ -465,13 +466,18 @@ func freezeReleaseName(remark string) string {
 }
 
 type freezePairKey struct {
+	userID uint64
 	remark string
 	settle string
 	order  string
 }
 
 func freezePairOf(e *LedgerEntry) freezePairKey {
+	if e == nil {
+		return freezePairKey{}
+	}
 	return freezePairKey{
+		userID: e.UserID,
 		remark: freezeRemarkFamily(e.Remark),
 		settle: settleDateStr(e.SettleDate),
 		order:  orderIDStr(e.OrderID),
@@ -601,7 +607,11 @@ func paginateRewards(items []*RewardItem, page, pageSize int) []*RewardItem {
 }
 
 func rewardPairOf(e *LedgerEntry) freezePairKey {
+	if e == nil {
+		return freezePairKey{}
+	}
 	return freezePairKey{
+		userID: e.UserID,
 		remark: RewardFamily(e.EntryType),
 		settle: settleDateStr(e.SettleDate),
 		order:  orderIDStr(e.OrderID),
@@ -728,6 +738,31 @@ func (uc *LedgerUseCase) ListAdminRewards(ctx context.Context, address, reason s
 		return nil, err
 	}
 	return &RewardPage{Items: items, Total: total}, nil
+}
+
+// ListAdminFreezeRelease 管理端冻结释放明细：解冻入账与到期清除，U/ISPAY 配对。
+func (uc *LedgerUseCase) ListAdminFreezeRelease(ctx context.Context, address string, page int) (*RewardPage, error) {
+	if uc == nil || uc.ledger == nil {
+		return &RewardPage{Items: []*RewardItem{}}, nil
+	}
+	rows, err := uc.ledger.ListByTypes(ctx, strings.TrimSpace(address), []string{LedgerActivate, LedgerActivateIspay})
+	if err != nil {
+		return nil, err
+	}
+	items := filterFreezeRelease(rows)
+	for _, it := range items {
+		if it == nil {
+			continue
+		}
+		it.Category = "冻结释放"
+	}
+	if err := uc.attachOrderSources(ctx, items); err != nil {
+		return nil, err
+	}
+	return &RewardPage{
+		Items: paginateRewards(items, page, DefaultRewardPageSize),
+		Total: len(items),
+	}, nil
 }
 
 func (uc *LedgerUseCase) attachOrderSources(ctx context.Context, items []*RewardItem) error {

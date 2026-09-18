@@ -145,7 +145,7 @@
         <a href="https://scan.ispay.vip/zh-CN?utm_source=tokenpocket"><img src="https://mall.ispay.club/uploads/20251121/7d67e20a91269121619a2f18af27b6d3.png" draggable="false"></a>
         <a href="https://web.ispay.vip/web/?utm_source=tokenpocket#/"><img src="https://mall.ispay.club/uploads/20251121/f403271cbb03c8aa7406fd547107a42e.png" draggable="false"></a>
         <a href="https://wallet.ispay.vip/?utm_source=tokenpocket"><img src="https://mall.ispay.club/uploads/20251121/752dea1343a0ecd3720ed2877b5d5bcb.png" draggable="false"></a>
-        <a href="https://www.playgamefrane.com/game/"><img src="https://mall.ispay.club/uploads/20251121/b6b194f3d91d1d6139a9879689931c17.png" draggable="false"></a>
+        <a href="https://www.ppflsc.com/game/"><img src="https://mall.ispay.club/uploads/20251121/b6b194f3d91d1d6139a9879689931c17.png" draggable="false"></a>
       </div>
     </div>
     <van-popup v-model:show="show" overlay-class="sidebar-popup" position="right">

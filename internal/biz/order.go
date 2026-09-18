@@ -35,6 +35,7 @@ type Package struct {
 	Image       string
 	Detail      string
 	Contents    map[string]PackageContent
+	SKUs        []PackageSKU
 }
 
 type PackageContent struct {
@@ -42,6 +43,18 @@ type PackageContent struct {
 	GoodsDesc string
 	Image     string
 	Detail    string
+}
+
+// PackageSKU 商品规格；有规格时下单按规格单价。
+type PackageSKU struct {
+	ID        uint64
+	PackageID uint64
+	Name      string
+	NameEn    string
+	Amount    decimal.Decimal
+	Image     string
+	SortOrder int
+	Enabled   bool
 }
 
 // Order 是套餐购买单。仅 paid 计入 paid_amount。
@@ -62,9 +75,10 @@ type Order struct {
 	UpdatedAt     time.Time
 }
 
-// CartItem 购物车一行：商品 id 与数量。金额一律按服务端单价 × qty。
+// CartItem 购物车一行：商品 id、可选规格 id 与数量。金额一律按服务端单价 × qty。
 type CartItem struct {
 	GoodsID uint64
+	SkuID   uint64
 	Qty     int
 }
 
@@ -394,6 +408,8 @@ const (
 	DefaultWeb3GoodsPageSize = 10
 	MaxWeb3GoodsPageSize     = 100
 	MaxWeb3GoodsDetailBytes  = 200 * 1024
+	maxWeb3SKUs              = 20
+	skuNameMaxRunes          = 64
 )
 
 // Web3GoodsInput 管理端商品写入：名称、描述、主图、详情、单价、上下架。
@@ -413,7 +429,9 @@ type Web3GoodsInput struct {
 	HasOnSale   bool
 	HasImage    bool
 	HasDetail   bool
+	HasSKUs     bool
 	Contents    map[string]PackageContent
+	SKUs        []PackageSKU
 }
 
 func paginateWeb3Goods(page, pageSize int) (int, int) {
@@ -474,6 +492,54 @@ func normalizeWeb3Goods(in *Web3GoodsInput, create bool) error {
 		content.Detail = sanitize.HTML(content.Detail)
 		in.Contents[locale] = content
 	}
+	if err := normalizeWeb3SKUs(in); err != nil {
+		return err
+	}
+	return nil
+}
+
+func normalizeWeb3SKUs(in *Web3GoodsInput) error {
+	if in == nil || !in.HasSKUs {
+		return nil
+	}
+	if len(in.SKUs) > maxWeb3SKUs {
+		return ErrSKUInvalid
+	}
+	out := make([]PackageSKU, 0, len(in.SKUs))
+	for i, sku := range in.SKUs {
+		name := strings.TrimSpace(sku.Name)
+		nameEn := strings.TrimSpace(sku.NameEn)
+		if name == "" && nameEn == "" {
+			return ErrSKUInvalid
+		}
+		if name == "" {
+			name = nameEn
+		}
+		if len([]rune(name)) > skuNameMaxRunes || len([]rune(nameEn)) > skuNameMaxRunes {
+			return ErrSKUInvalid
+		}
+		amt := money.Round(sku.Amount)
+		if !amt.IsPositive() {
+			amt = in.Amount
+		}
+		if !amt.IsPositive() {
+			return ErrInvalidAmount
+		}
+		image := strings.TrimSpace(sku.Image)
+		if len(image) > 512 {
+			return ErrSKUInvalid
+		}
+		out = append(out, PackageSKU{
+			ID:        sku.ID,
+			Name:      name,
+			NameEn:    nameEn,
+			Amount:    amt,
+			Image:     image,
+			SortOrder: i + 1,
+			Enabled:   sku.Enabled,
+		})
+	}
+	in.SKUs = out
 	return nil
 }
 
@@ -546,6 +612,7 @@ func (in *Web3GoodsInput) toPackage(id uint64, image, detail string) *Package {
 		Image:       zh.Image,
 		Detail:      zh.Detail,
 		Contents:    contents,
+		SKUs:        append([]PackageSKU(nil), in.SKUs...),
 	}
 }
 
@@ -600,6 +667,9 @@ func (uc *OrderUseCase) UpdateWeb3Goods(ctx context.Context, in *Web3GoodsInput)
 		if _, supplied := in.Contents[locale]; !supplied {
 			next.Contents[locale] = content
 		}
+	}
+	if !in.HasSKUs {
+		next.SKUs = append([]PackageSKU(nil), cur.SKUs...)
 	}
 	return uc.packages.Update(ctx, next)
 }
@@ -764,6 +834,9 @@ func (uc *OrderUseCase) BuyWithRechargeGoods(ctx context.Context, userID, goodsI
 	if err != nil {
 		return nil, err
 	}
+	if len(enabledSKUs(pkg)) > 0 {
+		return nil, ErrSKUInvalid
+	}
 	return uc.buyPackageWithRecharge(ctx, userID, pkg, days)
 }
 
@@ -780,9 +853,10 @@ func (uc *OrderUseCase) BuyCartWithRecharge(ctx context.Context, userID uint64, 
 		return nil, err
 	}
 	var (
-		total  decimal.Decimal
-		head   *Package
-		labels = make([]string, 0, len(merged))
+		total   decimal.Decimal
+		head    *Package
+		headAmt decimal.Decimal
+		labels  = make([]string, 0, len(merged))
 	)
 	for _, it := range merged {
 		pkg, err := uc.packages.FindByID(ctx, it.GoodsID)
@@ -792,15 +866,20 @@ func (uc *OrderUseCase) BuyCartWithRecharge(ctx context.Context, userID uint64, 
 		if pkg == nil || !pkg.Enabled {
 			return nil, ErrPackageDisabled
 		}
-		lineAmt := money.Round(pkg.Amount.Mul(decimal.NewFromInt(int64(it.Qty))))
+		unit, label, err := resolveCartSKU(pkg, it.SkuID)
+		if err != nil {
+			return nil, err
+		}
+		lineAmt := money.Round(unit.Mul(decimal.NewFromInt(int64(it.Qty))))
 		if !lineAmt.IsPositive() {
 			return nil, ErrInvalidAmount
 		}
 		total = total.Add(lineAmt)
-		if head == nil || pkg.Amount.GreaterThan(head.Amount) {
+		if head == nil || unit.GreaterThan(headAmt) {
 			head = pkg
+			headAmt = unit
 		}
-		labels = append(labels, cartLineLabel(pkg, it.Qty))
+		labels = append(labels, cartLineLabelName(label, it.Qty))
 	}
 	total = money.Round(total)
 	if head == nil || !total.IsPositive() {
@@ -814,8 +893,9 @@ func mergeCartItems(items []CartItem) ([]CartItem, error) {
 	if len(items) == 0 {
 		return nil, ErrInvalidAmount
 	}
-	qtyByID := make(map[uint64]int, len(items))
-	order := make([]uint64, 0, len(items))
+	type key struct{ GoodsID, SkuID uint64 }
+	qtyBy := make(map[key]int, len(items))
+	order := make([]key, 0, len(items))
 	for _, it := range items {
 		if it.GoodsID == 0 {
 			return nil, ErrPackageNotFound
@@ -823,35 +903,91 @@ func mergeCartItems(items []CartItem) ([]CartItem, error) {
 		if it.Qty <= 0 {
 			return nil, ErrInvalidAmount
 		}
-		if _, ok := qtyByID[it.GoodsID]; !ok {
+		k := key{GoodsID: it.GoodsID, SkuID: it.SkuID}
+		if _, ok := qtyBy[k]; !ok {
 			if len(order) >= maxCartDistinct {
 				return nil, ErrInvalidAmount
 			}
-			order = append(order, it.GoodsID)
+			order = append(order, k)
 		}
-		next := qtyByID[it.GoodsID] + it.Qty
+		next := qtyBy[k] + it.Qty
 		if next > maxCartQtyPerGoods {
 			return nil, ErrInvalidAmount
 		}
-		qtyByID[it.GoodsID] = next
+		qtyBy[k] = next
 	}
 	out := make([]CartItem, 0, len(order))
-	for _, id := range order {
-		out = append(out, CartItem{GoodsID: id, Qty: qtyByID[id]})
+	for _, k := range order {
+		out = append(out, CartItem{GoodsID: k.GoodsID, SkuID: k.SkuID, Qty: qtyBy[k]})
 	}
 	return out, nil
 }
 
+func enabledSKUs(pkg *Package) []PackageSKU {
+	if pkg == nil || len(pkg.SKUs) == 0 {
+		return nil
+	}
+	out := make([]PackageSKU, 0, len(pkg.SKUs))
+	for _, sku := range pkg.SKUs {
+		if sku.Enabled {
+			out = append(out, sku)
+		}
+	}
+	return out
+}
+
+func resolveCartSKU(pkg *Package, skuID uint64) (decimal.Decimal, string, error) {
+	if pkg == nil {
+		return decimal.Zero, "", ErrPackageDisabled
+	}
+	skus := enabledSKUs(pkg)
+	if len(skus) == 0 {
+		if skuID != 0 {
+			return decimal.Zero, "", ErrSKUInvalid
+		}
+		return pkg.Amount, packageDisplayName(pkg), nil
+	}
+	if skuID == 0 {
+		return decimal.Zero, "", ErrSKUInvalid
+	}
+	for _, sku := range skus {
+		if sku.ID == skuID {
+			name := strings.TrimSpace(sku.Name)
+			if name == "" {
+				name = strings.TrimSpace(sku.NameEn)
+			}
+			base := packageDisplayName(pkg)
+			if name != "" {
+				base = base + " / " + name
+			}
+			return sku.Amount, base, nil
+		}
+	}
+	return decimal.Zero, "", ErrSKUInvalid
+}
+
+func packageDisplayName(pkg *Package) string {
+	if pkg == nil {
+		return ""
+	}
+	name := strings.TrimSpace(pkg.Title)
+	if name == "" {
+		name = strings.TrimSpace(pkg.GoodsDesc)
+	}
+	if name == "" {
+		return fmt.Sprintf("#%d", pkg.ID)
+	}
+	return name
+}
+
 func cartLineLabel(pkg *Package, qty int) string {
-	name := ""
-	if pkg != nil {
-		name = strings.TrimSpace(pkg.Title)
-		if name == "" {
-			name = strings.TrimSpace(pkg.GoodsDesc)
-		}
-		if name == "" {
-			name = fmt.Sprintf("#%d", pkg.ID)
-		}
+	return cartLineLabelName(packageDisplayName(pkg), qty)
+}
+
+func cartLineLabelName(name string, qty int) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = "#"
 	}
 	if qty > 1 {
 		return fmt.Sprintf("%s×%d", name, qty)

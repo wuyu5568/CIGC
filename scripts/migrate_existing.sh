@@ -44,9 +44,14 @@ for f in \
   migrate_package_amount_days.sql \
   migrate_package_detail.sql \
   migrate_package_drop_amount_days.sql \
+  migrate_package_contents.sql \
+  migrate_package_skus.sql \
+  migrate_package_sku_image.sql \
+  migrate_shipping_addresses.sql \
   migrate_daily_cap_overflow.sql \
   migrate_ops_config.sql \
-  migrate_daily_cap_tiers.sql
+  migrate_daily_cap_tiers.sql \
+  migrate_payout_max_ispay.sql
 do
   echo "  apply $f"
   apply "$ROOT/scripts/$f"

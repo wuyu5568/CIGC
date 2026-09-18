@@ -32,7 +32,7 @@ func main() {
 		slog.Warn("allow_force_settle=true; disable in production")
 	}
 	if cfg.App.PayoutEnabled {
-		slog.Info("payout enabled", "max_usdt", cfg.App.PayoutMaxUSDT, "hot_key_set", cfg.App.HotWalletKey != "")
+		slog.Info("payout enabled", "max_usdt", cfg.App.PayoutMaxUSDT, "max_ispay_fallback", cfg.App.PayoutMaxIspay, "hot_key_set", cfg.App.HotWalletKey != "")
 	}
 
 	d, cleanupData, err := data.NewData(&cfg.Data)

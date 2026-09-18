@@ -77,6 +77,93 @@ func (r *packageRepo) saveContents(ctx context.Context, packageID uint64, conten
 	return nil
 }
 
+func (r *packageRepo) hydrate(ctx context.Context, packages []*biz.Package) error {
+	if err := r.attachContents(ctx, packages); err != nil {
+		return err
+	}
+	return r.attachSKUs(ctx, packages)
+}
+
+func (r *packageRepo) attachSKUs(ctx context.Context, packages []*biz.Package) error {
+	ids := make([]uint64, 0, len(packages))
+	byID := make(map[uint64]*biz.Package, len(packages))
+	for _, p := range packages {
+		if p != nil {
+			ids = append(ids, p.ID)
+			byID[p.ID] = p
+			p.SKUs = nil
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	var rows []PackageSKUModel
+	if err := r.data.Session(ctx).Where("package_id IN ?", ids).Order("sort_order ASC, id ASC").Find(&rows).Error; err != nil {
+		return err
+	}
+	for _, row := range rows {
+		p := byID[row.PackageID]
+		if p == nil {
+			continue
+		}
+		p.SKUs = append(p.SKUs, biz.PackageSKU{
+			ID:        row.ID,
+			PackageID: row.PackageID,
+			Name:      row.Name,
+			NameEn:    row.NameEn,
+			Amount:    row.Amount,
+			Image:     row.Image,
+			SortOrder: row.SortOrder,
+			Enabled:   row.Enabled,
+		})
+	}
+	return nil
+}
+
+func (r *packageRepo) saveSKUs(ctx context.Context, packageID uint64, skus []biz.PackageSKU) error {
+	keep := make([]uint64, 0, len(skus))
+	for i, sku := range skus {
+		fields := map[string]any{
+			"name": sku.Name, "name_en": sku.NameEn, "amount": sku.Amount,
+			"image": sku.Image, "sort_order": i + 1, "enabled": sku.Enabled,
+		}
+		if sku.ID > 0 {
+			var n int64
+			if err := r.data.Session(ctx).Model(&PackageSKUModel{}).
+				Where("id = ? AND package_id = ?", sku.ID, packageID).Count(&n).Error; err != nil {
+				return err
+			}
+			if n > 0 {
+				if err := r.data.Session(ctx).Model(&PackageSKUModel{}).
+					Where("id = ? AND package_id = ?", sku.ID, packageID).
+					Updates(fields).Error; err != nil {
+					return err
+				}
+				keep = append(keep, sku.ID)
+				continue
+			}
+		}
+		row := PackageSKUModel{
+			PackageID: packageID,
+			Name:      sku.Name,
+			NameEn:    sku.NameEn,
+			Amount:    sku.Amount,
+			Image:     sku.Image,
+			SortOrder: i + 1,
+			Enabled:   sku.Enabled,
+		}
+		if err := r.data.Session(ctx).Create(&row).Error; err != nil {
+			return err
+		}
+		keep = append(keep, row.ID)
+	}
+	q := r.data.Session(ctx).Where("package_id = ?", packageID)
+	if len(keep) > 0 {
+		q = q.Where("id NOT IN ?", keep)
+	}
+	return q.Delete(&PackageSKUModel{}).Error
+}
+
 func (r *packageRepo) ListEnabled(ctx context.Context) ([]*biz.Package, error) {
 	var rows []PackageModel
 	if err := r.data.db.WithContext(ctx).
@@ -89,7 +176,7 @@ func (r *packageRepo) ListEnabled(ctx context.Context) ([]*biz.Package, error) {
 	for i := range rows {
 		out[i] = toBizPackage(&rows[i])
 	}
-	if err := r.attachContents(ctx, out); err != nil {
+	if err := r.hydrate(ctx, out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -106,7 +193,7 @@ func (r *packageRepo) ListAll(ctx context.Context) ([]*biz.Package, error) {
 	for i := range rows {
 		out[i] = toBizPackage(&rows[i])
 	}
-	if err := r.attachContents(ctx, out); err != nil {
+	if err := r.hydrate(ctx, out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -124,7 +211,7 @@ func (r *packageRepo) FindByAmount(ctx context.Context, amount decimal.Decimal, 
 		return nil, err
 	}
 	p := toBizPackage(&m)
-	if err := r.attachContents(ctx, []*biz.Package{p}); err != nil {
+	if err := r.hydrate(ctx, []*biz.Package{p}); err != nil {
 		return nil, err
 	}
 	return p, nil
@@ -139,7 +226,7 @@ func (r *packageRepo) FindByID(ctx context.Context, id uint64) (*biz.Package, er
 		return nil, err
 	}
 	p := toBizPackage(&m)
-	if err := r.attachContents(ctx, []*biz.Package{p}); err != nil {
+	if err := r.hydrate(ctx, []*biz.Package{p}); err != nil {
 		return nil, err
 	}
 	return p, nil
@@ -161,7 +248,10 @@ func (r *packageRepo) Update(ctx context.Context, p *biz.Package) (*biz.Package,
 		if res.RowsAffected == 0 {
 			return biz.ErrPackageNotFound
 		}
-		return r.saveContents(txCtx, p.ID, p.Contents)
+		if err := r.saveContents(txCtx, p.ID, p.Contents); err != nil {
+			return err
+		}
+		return r.saveSKUs(txCtx, p.ID, p.SKUs)
 	})
 	if err != nil {
 		if isDuplicateKey(err) {
@@ -202,7 +292,10 @@ func (r *packageRepo) Create(ctx context.Context, p *biz.Package) (*biz.Package,
 		if err := r.data.Session(txCtx).Create(&m).Error; err != nil {
 			return err
 		}
-		return r.saveContents(txCtx, m.ID, p.Contents)
+		if err := r.saveContents(txCtx, m.ID, p.Contents); err != nil {
+			return err
+		}
+		return r.saveSKUs(txCtx, m.ID, p.SKUs)
 	}); err != nil {
 		if isDuplicateKey(err) {
 			return nil, biz.ErrPackageAmountTaken

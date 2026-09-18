@@ -12,17 +12,19 @@ import (
 const (
 	ConfigMinWithdrawIspay = "min_withdraw_amount_ispay"
 	ConfigWithdrawFeeIspay = "withdraw_fee_rate_ispay"
+	ConfigPayoutMaxIspay   = "payout_max_ispay"
 	ConfigManageGens       = "manage_generations"
 	ConfigOverflowHours    = "overflow_clear_hours"
 	ConfigWithdrawEnabled  = "withdraw_enabled"
 
-	defaultManageGens = 3
-	maxManageGens     = 10
-	minOverflowHours  = 1
-	maxOverflowHours  = 720
-	defaultMinIspay   = "0"
-	defaultFeeIspay   = "0"
-	defaultWithdrawOn = 1
+	defaultManageGens     = 3
+	maxManageGens         = 10
+	minOverflowHours      = 1
+	maxOverflowHours      = 720
+	defaultMinIspay       = "0"
+	defaultFeeIspay       = "0"
+	defaultWithdrawOn     = 1
+	defaultPayoutMaxIspay = "1000"
 )
 
 // editableConfigKeys 管理端允许改的键。
@@ -37,6 +39,7 @@ var editableConfigKeys = map[string]struct{}{
 	ConfigWithdrawFeeIspay:   {},
 	ConfigWithdrawDaily:      {},
 	ConfigWithdrawDailyIspay: {},
+	ConfigPayoutMaxIspay:     {},
 	ConfigIspayPrice:         {},
 	ConfigOverflowHours:      {},
 	ConfigWithdrawEnabled:    {},
@@ -176,7 +179,7 @@ func NormalizeConfigValue(key, raw string) (string, error) {
 		if d.IsNegative() || d.GreaterThan(decimal.NewFromInt(1)) {
 			return "", ErrConfigInvalid
 		}
-	case ConfigMinWithdraw, ConfigIspayPrice:
+	case ConfigMinWithdraw, ConfigIspayPrice, ConfigPayoutMaxIspay:
 		if !d.IsPositive() {
 			return "", ErrConfigInvalid
 		}
@@ -252,11 +255,13 @@ func ConfigMeta(key string) (group, hint, effect string) {
 	case ConfigWithdrawFeeRate:
 		return "提现", "0.10 表示 10%。USDT 到账 = 申请额 − 手续费。", "之后新申请生效。"
 	case ConfigWithdrawFeeIspay:
-		return "提现", "0 表示免手续费。ISPAY 到账 = 申请额 − 手续费。", "之后新申请生效。链上打款仍未开通。"
+		return "提现", "0 表示免手续费。ISPAY 到账 = 申请额 − 手续费。", "之后新申请生效。"
 	case ConfigWithdrawDaily:
 		return "提现", "USDT 单笔申请上限；0 不限制。同一天可多次提现。", "之后新申请生效。"
 	case ConfigWithdrawDailyIspay:
 		return "提现", "ISPAY 单笔申请上限；0 不限制。同一天可多次提现。", "之后新申请生效。"
+	case ConfigPayoutMaxIspay:
+		return "提现", "热钱包单笔 ISPAY 打款上限，必须大于 0。超出的单留在队列，调高后再打。", "立刻生效，不用重启。"
 	case ConfigIspayPrice:
 		return "价格", "测试用交易所现价（U）。拆一半 U / 一半 ispay 时用。", "立刻影响新入账、待释放展示。不是链上真实行情。"
 	case ConfigOverflowHours:

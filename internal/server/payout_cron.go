@@ -10,7 +10,7 @@ import (
 	"github.com/robfig/cron/v3"
 )
 
-// PayoutCron 按 cron 扫已审 USDT 提现并打款。
+// PayoutCron 按 cron 扫已通过的 USDT/ISPAY 提现并打款。
 type PayoutCron struct {
 	cronExpr string
 	loc      *time.Location

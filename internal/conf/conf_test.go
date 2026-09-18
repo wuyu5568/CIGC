@@ -6,6 +6,31 @@ import (
 	"testing"
 )
 
+func TestStripCronExpr_QuotedDockerDefault(t *testing.T) {
+	if got := stripCronExpr(`"* * * * *"`); got != "* * * * *" {
+		t.Fatalf("got %q", got)
+	}
+	if got := stripCronExpr(`'* * * * *'`); got != "* * * * *" {
+		t.Fatalf("got %q", got)
+	}
+	if got := stripCronExpr("0 0 * * *"); got != "0 0 * * *" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestApplyEnvOverrides_QuotedDepositCron(t *testing.T) {
+	t.Setenv(EnvDepositCron, `"* * * * *"`)
+	t.Setenv(EnvPayoutCron, `'* * * * *'`)
+	bc := &Bootstrap{}
+	applyEnvOverrides(bc)
+	if bc.App.DepositCron != "* * * * *" {
+		t.Fatalf("deposit cron: got %q", bc.App.DepositCron)
+	}
+	if bc.App.PayoutCron != "* * * * *" {
+		t.Fatalf("payout cron: got %q", bc.App.PayoutCron)
+	}
+}
+
 func TestApplyEnvOverrides_Payout(t *testing.T) {
 	t.Setenv(EnvPayoutEnabled, "1")
 	t.Setenv(EnvPayoutCron, "*/5 * * * *")
@@ -102,6 +127,19 @@ func TestValidateReceive_DefaultPercents(t *testing.T) {
 	}})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestApplyEnvOverrides_IspayPayout(t *testing.T) {
+	t.Setenv(EnvIspayAddress, "0xBF9b0594E110C381F2606961C78641a194999999")
+	t.Setenv(EnvPayoutMaxIspay, "1000")
+	bc := &Bootstrap{}
+	applyEnvOverrides(bc)
+	if bc.App.IspayAddress != "0xBF9b0594E110C381F2606961C78641a194999999" {
+		t.Fatalf("ispay: got %q", bc.App.IspayAddress)
+	}
+	if bc.App.PayoutMaxIspay != 1000 {
+		t.Fatalf("max ispay: got %v", bc.App.PayoutMaxIspay)
 	}
 }
 

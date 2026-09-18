@@ -77,8 +77,15 @@ func TestRequireAdminJWTStillRejectsUser(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+userTok)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	if rec.Code == http.StatusOK {
+	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("user should not pass admin write: %d", rec.Code)
+	}
+	bad := httptest.NewRequest(http.MethodGet, "/api/admin/all", nil)
+	bad.Header.Set("Authorization", "Bearer stale-token")
+	badRec := httptest.NewRecorder()
+	h.ServeHTTP(badRec, bad)
+	if badRec.Code != http.StatusUnauthorized {
+		t.Fatalf("stale token should be 401: %d", badRec.Code)
 	}
 }
 

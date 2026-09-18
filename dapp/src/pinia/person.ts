@@ -59,7 +59,8 @@ export default defineStore('person', {
       four: '', // 区域
       five: '', // 详情
       six: '', // 收件人手机
-      seven: '' // 收件人
+      seven: '', // 收件人
+      shippingAddress: { name: '', contact: '', address: '' }
     },
     urlCode: '',
     sign: '',

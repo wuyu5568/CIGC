@@ -16,6 +16,20 @@ export default {
             params: parameter
         })
     },
+    freeze_assets: (parameter) => {
+        return axios({
+            url: `${api8005}/freeze_assets`,
+            method: 'get',
+            params: parameter
+        })
+    },
+    freeze_release: (parameter) => {
+        return axios({
+            url: `${api8005}/freeze_release`,
+            method: 'get',
+            params: parameter
+        })
+    },
     dividend_policy: (parameter) => {
         return axios({
             url: `${api8005}/lock_user_reward`,
@@ -218,7 +232,8 @@ export default {
         return axios({
             url: `${api8005}/daily_cap_tiers_update`,
             method: 'post',
-            data: parameter
+            data: parameter,
+            headers: { 'Content-Type': 'application/json;charset=UTF-8' }
         })
     },
     downline: (parameter) => {
@@ -290,14 +305,16 @@ export default {
         return axios({
             url: `${api8005}/web3_goods_create`,
             method: 'post',
-            data: parameter
+            data: parameter,
+            headers: { 'Content-Type': 'application/json;charset=UTF-8' }
         })
     },
     web3_goods_update: (parameter) => {
         return axios({
             url: `${api8005}/web3_goods_update`,
             method: 'post',
-            data: parameter
+            data: parameter,
+            headers: { 'Content-Type': 'application/json;charset=UTF-8' }
         })
     },
     web3_goods_status: (parameter) => {

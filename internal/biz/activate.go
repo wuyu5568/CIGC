@@ -2,6 +2,7 @@ package biz
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/cigc/app/internal/pkg/money"
@@ -237,10 +238,78 @@ func (uc *SettleUseCase) ListUserFreezeAssets(ctx context.Context, userID uint64
 	if err != nil {
 		return nil, err
 	}
+	out := freezeAssetItems(user, holds, uc.location())
+	if err := NewLedgerUseCase(uc.ledger, uc.orders, uc.users).attachOrderSources(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ListAdminFreezeAssets 管理端冻结资产明细：待日结解冻 + 批次剩余，可按地址模糊筛。
+func (uc *SettleUseCase) ListAdminFreezeAssets(ctx context.Context, address string, page int) (*RewardPage, error) {
+	if uc == nil || uc.users == nil {
+		return &RewardPage{Items: []*RewardItem{}}, nil
+	}
+	users, err := uc.users.ListAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var holds []*CapOverflowHold
+	if uc.daily != nil {
+		holds, err = uc.daily.ListActiveHoldsAll(ctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+	byUser := map[uint64][]*CapOverflowHold{}
+	for _, h := range holds {
+		if h == nil {
+			continue
+		}
+		byUser[h.UserID] = append(byUser[h.UserID], h)
+	}
+	q := strings.ToLower(strings.TrimSpace(address))
+	loc := uc.location()
+	out := make([]*RewardItem, 0)
+	for _, u := range users {
+		if u == nil {
+			continue
+		}
+		if q != "" && !strings.Contains(strings.ToLower(u.Address), q) {
+			continue
+		}
+		rows := freezeAssetItems(u, byUser[u.ID], loc)
+		if len(rows) == 0 {
+			continue
+		}
+		for _, it := range rows {
+			if it == nil {
+				continue
+			}
+			it.Address = u.Address
+			it.Category = "冻结资产"
+		}
+		out = append(out, rows...)
+	}
+	if err := NewLedgerUseCase(uc.ledger, uc.orders, uc.users).attachOrderSources(ctx, out); err != nil {
+		return nil, err
+	}
+	return &RewardPage{
+		Items: paginateRewards(out, page, DefaultRewardPageSize),
+		Total: len(out),
+	}, nil
+}
+
+func freezeAssetItems(user *User, holds []*CapOverflowHold, loc *time.Location) []*RewardItem {
+	if user == nil {
+		return []*RewardItem{}
+	}
 	holdUSDT := decimal.Zero
 	holdIspay := decimal.Zero
 	holdItems := make([]*RewardItem, 0, len(holds))
-	loc := uc.location()
+	if loc == nil {
+		loc = time.UTC
+	}
 	for _, h := range holds {
 		if h == nil {
 			continue
@@ -248,12 +317,16 @@ func (uc *SettleUseCase) ListUserFreezeAssets(ctx context.Context, userID uint64
 		holdUSDT = holdUSDT.Add(h.USDT)
 		holdIspay = holdIspay.Add(h.Ispay)
 		item := &RewardItem{
-			ID:        h.ID,
-			Name:      overflowHoldName(h.SourceType),
-			Reason:    "freeze_hold",
-			Amount:    amountStr(h.USDT),
-			AmountTwo: amountStr(h.Ispay),
-			OrderID:   orderIDStr(h.OrderID),
+			ID:          h.ID,
+			Name:        overflowHoldName(h.SourceType),
+			Reason:      "freeze_hold",
+			Category:    "冻结资产",
+			Amount:      amountStr(h.USDT),
+			AmountTwo:   amountStr(h.Ispay),
+			OrderID:     orderIDStr(h.OrderID),
+			BalanceKind: BalanceLock,
+			BalanceName: BalanceKindName(BalanceLock),
+			CreatedAt:   h.CreatedAt,
 		}
 		if h.ExpiresAt != nil {
 			item.SettleDate = "到期 " + h.ExpiresAt.In(loc).Format("2006-01-02 15:04")
@@ -273,16 +346,16 @@ func (uc *SettleUseCase) ListUserFreezeAssets(ctx context.Context, userID uint64
 	out := make([]*RewardItem, 0, 1+len(holdItems))
 	if pendingUSDT.IsPositive() || pendingIspay.IsPositive() {
 		out = append(out, &RewardItem{
-			Name:      "待日结解冻",
-			Detail:    "非批次冻结，按封顶排队",
-			Reason:    "freeze_pending",
-			Amount:    amountStr(pendingUSDT),
-			AmountTwo: amountStr(pendingIspay),
+			Name:        "待日结解冻",
+			Detail:      "非批次冻结，按封顶排队",
+			Reason:      "freeze_pending",
+			Category:    "冻结资产",
+			Amount:      amountStr(pendingUSDT),
+			AmountTwo:   amountStr(pendingIspay),
+			BalanceKind: BalanceLock,
+			BalanceName: BalanceKindName(BalanceLock),
 		})
 	}
 	out = append(out, holdItems...)
-	if err := NewLedgerUseCase(uc.ledger, uc.orders, uc.users).attachOrderSources(ctx, out); err != nil {
-		return nil, err
-	}
-	return out, nil
+	return out
 }

@@ -22,8 +22,9 @@ const DISPLAY = [
     { key: 'withdraw_fee_rate', name: 'USDT 提现手续费' },
     { key: 'withdraw_fee_rate_ispay', name: 'ISPAY 提现手续费' },
     { key: 'withdraw_daily_limit', name: 'USDT 单笔提现上限' },
-    { key: 'withdraw_daily_limit_ispay', name: 'ISPAY 单笔提现上限' },
-    { key: 'ispay_price', name: 'ISPAY 测试现价' },
+                { key: 'withdraw_daily_limit_ispay', name: 'ISPAY 单笔提现上限' },
+                { key: 'payout_max_ispay', name: 'ISPAY 单笔打款上限' },
+                { key: 'ispay_price', name: 'ISPAY 测试现价' },
     { key: 'overflow_clear_hours', name: '冻结清除时间' },
     { key: 'withdraw_enabled', name: '提现开关' },
 ]

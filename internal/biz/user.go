@@ -116,6 +116,7 @@ type UserUseCase struct {
 	auth        *conf.Auth
 	genesisAddr string
 	place       *PlacementUseCase
+	shipping    ShippingAddressRepo
 }
 
 // NewUserUseCase 构造用户用例。
